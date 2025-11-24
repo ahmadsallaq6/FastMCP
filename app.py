@@ -18,9 +18,37 @@ def save_json(path, data):
 
 
 # ================
-#   CUSTOMER LOOKUP
+#   LIST ALL CUSTOMERS (NAME + ID ONLY)
 # ================
-@app.get("/customers/{customer_id}", response_model=Customer)
+@app.get(
+    "/customers/basic",
+    description="Returns a lightweight list of all customers containing only customer_id and name."
+)
+def list_customers_basic():
+    customers = load_json("data/customers.json")
+
+    if not isinstance(customers, dict):
+        raise HTTPException(500, "Invalid customers.json structure")
+
+    result = [
+        {
+            "customer_id": data.get("customer_id"),
+            "name": data.get("name")
+        }
+        for data in customers.values()
+    ]
+
+    return result
+
+
+# ================
+#   CUSTOMER LOOKUP (FULL DETAILS)
+# ================
+@app.get(
+    "/customers/{customer_id}",
+    response_model=Customer,
+    description="Retrieves full customer details including personal info, income, credit score, and employment data."
+)
 def get_customer(customer_id: str):
     db = load_json("data/customers.json")
     if customer_id not in db:
@@ -31,7 +59,11 @@ def get_customer(customer_id: str):
 # ================
 #   ACCOUNT LOOKUP
 # ================
-@app.get("/customers/{customer_id}/accounts", response_model=List[Account])
+@app.get(
+    "/customers/{customer_id}/accounts",
+    response_model=List[Account],
+    description="Returns a list of all bank accounts associated with the given customer ID."
+)
 def get_accounts(customer_id: str):
     db = load_json("data/accounts.json")
     if customer_id not in db:
@@ -42,7 +74,11 @@ def get_accounts(customer_id: str):
 # ================
 #   LOAN REQUEST
 # ================
-@app.post("/loans/apply", response_model=Loan)
+@app.post(
+    "/loans/apply",
+    response_model=Loan,
+    description="Creates a new loan request for the customer and performs a basic eligibility check using income and credit score."
+)
 def apply_for_loan(request: LoanRequest):
     customers = load_json("data/customers.json")
 
@@ -79,14 +115,24 @@ def apply_for_loan(request: LoanRequest):
 # ================
 #   EXISTING LOANS
 # ================
-@app.get("/loans/{customer_id}", response_model=List[Loan])
+@app.get(
+    "/loans/{customer_id}",
+    response_model=List[Loan],
+    description="Returns all existing loans for a specific customer, including loan status and remaining balance."
+)
 def get_customer_loans(customer_id: str):
     loans = load_json("data/loans.json")["loans"]
     customer_loans = [l for l in loans if l["customer_id"] == customer_id]
     return customer_loans
 
 
-@app.get("/customers/{customer_id}/dti")
+# ================
+#   DTI (DEBT-TO-INCOME RATIO)
+# ================
+@app.get(
+    "/customers/{customer_id}/dti",
+    description="Calculates the customer's Debt-to-Income ratio using monthly income and existing loan obligations. Returns risk level."
+)
 def calculate_dti(customer_id: str):
     customers = load_json("data/customers.json")
     loans = load_json("data/loans.json")["loans"]
@@ -96,23 +142,17 @@ def calculate_dti(customer_id: str):
 
     customer = customers[customer_id]
 
-    # ---- Step 1: Monthly income ----
     monthly_income = customer["annual_income"] / 12
-
-    # ---- Step 2: Existing monthly debt ----
     customer_loans = [l for l in loans if l["customer_id"] == customer_id]
 
-    # Assume simple 12-month amortization for existing loans
     existing_monthly_debt = sum(l["remaining_balance"] / 12 for l in customer_loans)
 
-    # ---- Step 3: Compute DTI ----
     if monthly_income <= 0:
         dti = None
         status = "invalid_income"
     else:
         dti = existing_monthly_debt / monthly_income
 
-        # ---- Step 4: Basic DTI thresholds ----
         if dti <= 0.35:
             status = "good"
         elif dti <= 0.45:
@@ -120,7 +160,6 @@ def calculate_dti(customer_id: str):
         else:
             status = "high_risk"
 
-    # ---- Step 5: Return response ----
     return {
         "customer_id": customer_id,
         "monthly_income": round(monthly_income, 2),
@@ -131,10 +170,9 @@ def calculate_dti(customer_id: str):
     }
 
 
-
-
-
-
+# ================
+#   EMPLOYMENT SCORE CALCULATION
+# ================
 def calculate_employment_score(customer):
     emp_type = customer.get("employment_type")
     years = customer.get("years_with_employer")
@@ -156,9 +194,16 @@ def calculate_employment_score(customer):
             return 0.6
         return 0.4
 
-    # unemployed / unknown
     return 0.0
-@app.get("/customers/{customer_id}/employment_score")
+
+
+# ================
+#   EMPLOYMENT SCORE ENDPOINT
+# ================
+@app.get(
+    "/customers/{customer_id}/employment_score",
+    description="Returns the customer’s employment stability score based on job type, years of employment, and business history."
+)
 def get_employment_score(customer_id: str):
     customers = load_json("data/customers.json")
 
@@ -168,7 +213,6 @@ def get_employment_score(customer_id: str):
     customer = customers[customer_id]
     score = calculate_employment_score(customer)
 
-    # Classification
     if score >= 1.0:
         level = "excellent"
     elif score >= 0.7:
