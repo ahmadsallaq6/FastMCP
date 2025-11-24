@@ -34,6 +34,55 @@
             "amount": 4000.0,
             "status": "approved",
             "remaining_balance": 4000.0
+        },
+        {
+            "loan_id": "LN-6d0b33a5",
+            "customer_id": "CUST-001",
+            "amount": 2500.0,
+            "status": "approved",
+            "remaining_balance": 2500.0
+        },
+        {
+            "loan_id": "LN-72655128",
+            "customer_id": "CUST-001",
+            "amount": 3000.0,
+            "status": "approved",
+            "remaining_balance": 3000.0
+        },
+        {
+            "loan_id": "LN-3ce99d35",
+            "customer_id": "CUST-001",
+            "amount": 2300.0,
+            "status": "approved",
+            "remaining_balance": 2300.0
+        },
+        {
+            "loan_id": "LN-8899efcb",
+            "customer_id": "CUST-001",
+            "amount": 1200.0,
+            "status": "approved",
+            "remaining_balance": 1200.0
+        },
+        {
+            "loan_id": "LN-1d5514e4",
+            "customer_id": "CUST-001",
+            "amount": 500.0,
+            "status": "approved",
+            "remaining_balance": 500.0
+        },
+        {
+            "loan_id": "LN-fde51b90",
+            "customer_id": "CUST-002",
+            "amount": 500.0,
+            "status": "approved",
+            "remaining_balance": 500.0
+        },
+        {
+            "loan_id": "LN-953b3935",
+            "customer_id": "CUST-002",
+            "amount": 1000.0,
+            "status": "approved",
+            "remaining_balance": 1000.0
         }
     ]
 }
