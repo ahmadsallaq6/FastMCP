@@ -20,6 +20,13 @@
             "amount": 10000.0,
             "status": "approved",
             "remaining_balance": 10000.0
+        },
+        {
+            "loan_id": "LN-cd563cdc",
+            "customer_id": "CUST-001",
+            "amount": 5000.0,
+            "status": "approved",
+            "remaining_balance": 5000.0
         }
     ]
 }

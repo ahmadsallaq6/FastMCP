@@ -4,26 +4,52 @@
         "name": "Sarah Jenkins",
         "email": "sarah.j@example.com",
         "phone": "+1-555-0101",
+
         "employment_status": "Employed",
+        "employment_type": "permanent",
+        "years_with_employer": 3,
+        "business_years": null,
+
         "annual_income": 85000,
-        "credit_score": 780
+        "monthly_expenses": 1500,
+
+        "credit_score": 780,
+        "risk_flags": []
     },
+
     "CUST-002": {
         "customer_id": "CUST-002",
         "name": "Michael Chen",
         "email": "m.chen99@example.com",
         "phone": "+1-555-0102",
+
         "employment_status": "Self-Employed",
+        "employment_type": "self_employed",
+        "years_with_employer": null,
+        "business_years": 5,
+
         "annual_income": 120000,
-        "credit_score": 715
+        "monthly_expenses": 2200,
+
+        "credit_score": 715,
+        "risk_flags": []
     },
+
     "CUST-003": {
         "customer_id": "CUST-003",
         "name": "David Miller",
         "email": "dave.miller@example.com",
         "phone": "+1-555-0103",
+
         "employment_status": "Unemployed",
+        "employment_type": "unemployed",
+        "years_with_employer": 0,
+        "business_years": null,
+
         "annual_income": 0,
-        "credit_score": 580
+        "monthly_expenses": 900,
+
+        "credit_score": 580,
+        "risk_flags": ["unemployed", "low_income"]
     }
 }

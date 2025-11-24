@@ -29,7 +29,7 @@ while True:
                 {
                     "type": "mcp",
                     "server_label": "MCP-server",
-                    "server_url": "https://stubbly-cathryn-broadish.ngrok-free.dev/sse", 
+                    "server_url": "https://dithionous-dania-unterminated.ngrok-free.dev/sse", 
                     "require_approval": "never",
                 },
             ],
