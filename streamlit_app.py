@@ -134,7 +134,7 @@ if user_input := st.chat_input("Send a message..."):
         with st.spinner("Thinking..."):
             try:
                 # Call OpenAI API with MCP tools
-                response = st.session_state.client.responses.create(
+                stream = st.session_state.client.responses.create(
                     model=model,
                     input=user_input,
                     previous_response_id=st.session_state.previous_response_id,
@@ -146,46 +146,58 @@ if user_input := st.chat_input("Send a message..."):
                             "require_approval": "never",
                         },
                     ],
+                    stream=True,
                 )
                 
-                # Update response ID for conversation continuity
-                st.session_state.previous_response_id = response.id
-                
-                # Get assistant response
-                assistant_message = response.output_text
-
-                # Extract tool calls
+                assistant_message = ""
                 tool_calls = []
-                if hasattr(response, 'output') and response.output:
-                    for item in response.output:
-                        if getattr(item, 'type', '') == 'mcp_call':
-                            tool_calls.append({
-                                "name": getattr(item, 'name', 'Unknown'),
-                                "arguments": getattr(item, 'arguments', ''),
-                                "result": getattr(item, 'output', '')
-                            })
-                        elif getattr(item, 'type', '') == 'function_call':
-                             tool_calls.append({
-                                "name": getattr(item, 'name', 'Unknown'),
-                                "arguments": getattr(item, 'arguments', ''),
-                                "result": "Function call result not available"
-                            })
-
-                # Display tool calls immediately
-                if tool_calls:
-                    for tool_call in tool_calls:
-                        with st.status(f"🛠️ Used tool: {tool_call.get('name', 'Unknown')}", state="complete"):
-                            st.write("Input:")
-                            st.code(str(tool_call.get('arguments', '')))
-                            st.write("Output:")
-                            st.code(str(tool_call.get('result', '')))
-
-                # Escape dollar signs to prevent Streamlit from interpreting them as LaTeX
-                # This fixes issues where currency amounts like $5,000 get rendered as math
-                display_message = assistant_message.replace("$", "\\$")
+                tool_placeholders = {}
                 
-                # Display assistant response
-                st.markdown(display_message)
+                # Container for tools (appears before text)
+                tools_container = st.container()
+                # Placeholder for text
+                text_placeholder = st.empty()
+                
+                for event in stream:
+                    if event.type == 'response.created':
+                        st.session_state.previous_response_id = event.response.id
+                        
+                    elif event.type == 'response.output_text.delta':
+                        if event.delta:
+                            assistant_message += event.delta
+                            # Escape dollar signs for display
+                            display_msg = assistant_message.replace("$", "\\$")
+                            text_placeholder.markdown(display_msg + "▌")
+                            
+                    elif event.type == 'response.output_item.added':
+                        item = event.item
+                        if item.type == 'mcp_call':
+                            ph = tools_container.empty()
+                            tool_placeholders[item.id] = ph
+                            with ph.status(f"🛠️ Calling tool: {item.name}...", state="running"):
+                                st.write("Input:")
+                                st.code(item.arguments)
+                                
+                    elif event.type == 'response.output_item.done':
+                        item = event.item
+                        if item.type == 'mcp_call':
+                            ph = tool_placeholders.get(item.id)
+                            if ph:
+                                with ph.status(f"🛠️ Used tool: {item.name}", state="complete"):
+                                    st.write("Input:")
+                                    st.code(item.arguments)
+                                    st.write("Output:")
+                                    st.code(item.output)
+                            
+                            tool_calls.append({
+                                "name": item.name,
+                                "arguments": item.arguments,
+                                "result": item.output
+                            })
+                
+                # Final display update
+                display_message = assistant_message.replace("$", "\\$")
+                text_placeholder.markdown(display_message)
                 
                 # Add assistant message to chat history (store original for consistency)
                 st.session_state.messages.append({
