@@ -8,7 +8,7 @@ load_dotenv()
 
 # Page configuration
 st.set_page_config(
-    page_title="MCP ChatBot",
+    page_title="Loans Assistant ChatBot 💬",
     page_icon="💬",
     layout="centered",
     initial_sidebar_state="expanded"
@@ -94,11 +94,11 @@ with st.sidebar:
     
     st.divider()
     
-    st.caption("💬 MCP ChatBot")
+    st.caption("💬 Loans Assistant ChatBot")
     st.caption("Powered by OpenAI & FastMCP")
 
 # Main chat interface
-st.title("💬 MCP ChatBot")
+st.title("💬 Loans Assistant ChatBot")
 
 # Display chat messages
 for message in st.session_state.messages:
