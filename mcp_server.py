@@ -12,7 +12,7 @@ client = httpx.AsyncClient(
 print("Fetching OpenAPI spec (this may take a moment if the server is waking up)...")
 response = httpx.get(
     "https://customer-microservice-eu.proudsky-2219dea3.westeurope.azurecontainerapps.io/openapi.json",
-    timeout=60.0 # Increased from default 5s to 60s
+    timeout=60.0 
 )
 openapi_spec = response.json()
 

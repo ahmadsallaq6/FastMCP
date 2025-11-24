@@ -1,0 +1,25 @@
+{
+    "loans": [
+        {
+            "loan_id": "LN-5001",
+            "customer_id": "CUST-002",
+            "amount": 350000.0,
+            "status": "Active",
+            "remaining_balance": 310500.0
+        },
+        {
+            "loan_id": "LN-5002",
+            "customer_id": "CUST-003",
+            "amount": 1000.0,
+            "status": "Active",
+            "remaining_balance": 840.5
+        },
+        {
+            "loan_id": "LN-e138a005",
+            "customer_id": "CUST-001",
+            "amount": 10000.0,
+            "status": "approved",
+            "remaining_balance": 10000.0
+        }
+    ]
+}

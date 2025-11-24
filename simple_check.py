@@ -6,12 +6,12 @@ from mcp.client.stdio import stdio_client
 # This tells the test script how to launch your server
 server_params = StdioServerParameters(
     command=sys.executable,  # Uses the same python you are running now
-    args=["mcp_server.py"],  # The file you just saved
+    args=["mcp.py"],  # The file you just saved
     env=None                 # Inherit environment variables
 )
 
 async def main():
-    print("🔌 Attempting to connect to mcp_server.py...")
+    print("🔌 Attempting to connect to mcp.py...")
     
     # Launch the server process
     async with stdio_client(server_params) as (read, write):

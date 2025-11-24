@@ -1,0 +1,29 @@
+{
+    "CUST-001": {
+        "customer_id": "CUST-001",
+        "name": "Sarah Jenkins",
+        "email": "sarah.j@example.com",
+        "phone": "+1-555-0101",
+        "employment_status": "Employed",
+        "annual_income": 85000,
+        "credit_score": 780
+    },
+    "CUST-002": {
+        "customer_id": "CUST-002",
+        "name": "Michael Chen",
+        "email": "m.chen99@example.com",
+        "phone": "+1-555-0102",
+        "employment_status": "Self-Employed",
+        "annual_income": 120000,
+        "credit_score": 715
+    },
+    "CUST-003": {
+        "customer_id": "CUST-003",
+        "name": "David Miller",
+        "email": "dave.miller@example.com",
+        "phone": "+1-555-0103",
+        "employment_status": "Unemployed",
+        "annual_income": 0,
+        "credit_score": 580
+    }
+}
