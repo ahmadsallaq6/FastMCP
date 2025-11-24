@@ -100,28 +100,7 @@ with st.sidebar:
 # Main chat interface
 st.title("💬 Loans Assistant ChatBot")
 
-# Display chat messages
-for message in st.session_state.messages:
-    role = message["role"]
-    content = message["content"]
-    tool_calls = message.get("tool_calls", [])
-    
-    with st.chat_message(role, avatar="👤" if role == "user" else "🤖"):
-        # Display tool calls if any
-        if tool_calls:
-            for tool_call in tool_calls:
-                with st.status(f"🛠️ Used tool: {tool_call.get('name', 'Unknown')}", state="complete"):
-                    st.write("Input:")
-                    st.code(str(tool_call.get('arguments', '')))
-                    st.write("Output:")
-                    st.code(str(tool_call.get('result', '')))
-
-        # Escape dollar signs for display to prevent LaTeX rendering issues
-        display_content = content.replace("$", "\\$")
-        st.markdown(display_content)
-
-# Chat input
-if user_input := st.chat_input("Send a message..."):
+def process_chat(user_input):
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": user_input})
     
@@ -133,10 +112,19 @@ if user_input := st.chat_input("Send a message..."):
     with st.chat_message("assistant", avatar="🤖"):
         with st.spinner("Thinking..."):
             try:
+                # Inject instructions if first message
+                api_input = user_input
+                # Check if this is the first user message (messages list has 1 item which is the user message we just added)
+                # Actually, if we just added it, len is 1.
+                # But if we cleared chat, len is 1.
+                # If we are in a conversation, len > 1.
+                if len(st.session_state.messages) == 1:
+                     api_input = "Instructions: You are a loan assistant. Before applying for a loan, you MUST ask the user for explicit approval. Display a summary and ask 'Do you approve this loan?'. If you are ready to apply, output 'REQ_APPROVAL'. \n\nUser: " + user_input
+
                 # Call OpenAI API with MCP tools
                 stream = st.session_state.client.responses.create(
                     model=model,
-                    input=user_input,
+                    input=api_input,
                     previous_response_id=st.session_state.previous_response_id,
                     tools=[
                         {
@@ -158,15 +146,15 @@ if user_input := st.chat_input("Send a message..."):
                 # Placeholder for text
                 text_placeholder = st.empty()
                 
-                for event in stream:
+                for event in stream: 
                     if event.type == 'response.created':
                         st.session_state.previous_response_id = event.response.id
                         
                     elif event.type == 'response.output_text.delta':
                         if event.delta:
                             assistant_message += event.delta
-                            # Escape dollar signs for display
-                            display_msg = assistant_message.replace("$", "\\$")
+                            # Escape dollar signs for display and hide REQ_APPROVAL
+                            display_msg = assistant_message.replace("$", "\\$").replace("REQ_APPROVAL", "")
                             text_placeholder.markdown(display_msg + "▌")
                             
                     elif event.type == 'response.output_item.added':
@@ -196,7 +184,7 @@ if user_input := st.chat_input("Send a message..."):
                             })
                 
                 # Final display update
-                display_message = assistant_message.replace("$", "\\$")
+                display_message = assistant_message.replace("$", "\\$").replace("REQ_APPROVAL", "")
                 text_placeholder.markdown(display_message)
                 
                 # Add assistant message to chat history (store original for consistency)
@@ -211,3 +199,38 @@ if user_input := st.chat_input("Send a message..."):
                 
             except Exception as e:
                 st.error(f"❌ Error: {e}")
+
+# Display chat messages
+for message in st.session_state.messages:
+    role = message["role"]
+    content = message["content"]
+    tool_calls = message.get("tool_calls", [])
+    
+    with st.chat_message(role, avatar="👤" if role == "user" else "🤖"):
+        # Display tool calls if any
+        if tool_calls:
+            for tool_call in tool_calls:
+                with st.status(f"🛠️ Used tool: {tool_call.get('name', 'Unknown')}", state="complete"):
+                    st.write("Input:")
+                    st.code(str(tool_call.get('arguments', '')))
+                    st.write("Output:")
+                    st.code(str(tool_call.get('result', '')))
+
+        # Escape dollar signs for display to prevent LaTeX rendering issues
+        display_content = content.replace("$", "\\$").replace("REQ_APPROVAL", "")
+        st.markdown(display_content)
+
+# Check for approval request
+last_msg = st.session_state.messages[-1] if st.session_state.messages else None
+if last_msg and last_msg["role"] == "assistant" and "REQ_APPROVAL" in last_msg["content"]:
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✅ Approve", type="primary", use_container_width=True):
+            process_chat("Approved")
+    with col2:
+        if st.button("❌ Reject", type="secondary", use_container_width=True):
+            process_chat("Rejected")
+
+# Chat input
+if user_input := st.chat_input("Send a message..."):
+    process_chat(user_input)
