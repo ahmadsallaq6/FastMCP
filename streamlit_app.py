@@ -2,9 +2,50 @@ import streamlit as st
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+from datetime import datetime
+import uuid
+import pymongo
 
 # Load environment variables
 load_dotenv()
+
+@st.cache_resource(show_spinner=False)
+def get_mongo_client():
+    mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+    try:
+        client = pymongo.MongoClient(mongo_uri, serverSelectionTimeoutMS=2000)
+        # Check connection
+        client.server_info()
+        return client
+    except Exception as e:
+        return None
+
+def get_mongo_collection():
+    client = get_mongo_client()
+    if client:
+        db = client["loan_assistant_db"]
+        return db["logs"]
+    return None
+
+def log_interaction(user_input, assistant_message, tool_calls):
+    log_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "session_id": st.session_state.get("session_id", "unknown"),
+        "user_input": user_input,
+        "assistant_message": assistant_message,
+        "tool_calls": tool_calls
+    }
+    
+    # Try MongoDB first
+    collection = get_mongo_collection()
+    if collection is not None:
+        try:
+            collection.insert_one(log_entry)
+            return
+        except Exception as e:
+            st.error(f"MongoDB logging failed: {e}")
+    else:
+        st.error("MongoDB connection not available for logging.")
 
 # Page configuration
 st.set_page_config(
@@ -56,6 +97,9 @@ st.markdown("""
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
+
 if "previous_response_id" not in st.session_state:
     st.session_state.previous_response_id = None
 
@@ -65,6 +109,9 @@ if "client" not in st.session_state:
     except Exception as e:
         st.error(f"Failed to initialize OpenAI client: {e}")
         st.stop()
+
+# Initialize MongoDB connection
+get_mongo_client()
 
 # Sidebar
 with st.sidebar:
@@ -115,11 +162,20 @@ def process_chat(user_input):
                 # Inject instructions if first message
                 api_input = user_input
                 # Check if this is the first user message (messages list has 1 item which is the user message we just added)
-                # Actually, if we just added it, len is 1.
-                # But if we cleared chat, len is 1.
-                # If we are in a conversation, len > 1.
                 if len(st.session_state.messages) == 1:
-                     api_input = "Instructions: You are a loan assistant. Before applying for a loan, you MUST ask the user for explicit approval. Display a summary and ask 'Do you approve this loan?'. If you are ready to apply, output 'REQ_APPROVAL'. \n\nUser: " + user_input
+                     api_input = (
+                        "System Instructions: You are a helpful loan assistant. "
+                        "You have access to tools including 'apply_for_loan'. "
+                        "CRITICAL SAFETY RULE: You must NEVER call the 'apply_for_loan' tool without explicit user approval. "
+                        "When the user wants a loan and you have gathered necessary info, you must STOP and ask for approval. "
+                        "To ask for approval, output the exact text 'REQ_APPROVAL' followed by a summary of the loan details. "
+                        "Do NOT call the tool yet. "
+                        "I will show the user 'Approve' and 'Reject' buttons. "
+                        "Wait for the user to click one (which will send 'Approved' or 'Rejected' to you). "
+                        "If 'Approved', ONLY THEN call the 'apply_for_loan' tool. "
+                        "If 'Rejected', do not call the tool. "
+                        "\n\nUser: " + user_input
+                     )
 
                 # Call OpenAI API with MCP tools
                 stream = st.session_state.client.responses.create(
@@ -194,6 +250,9 @@ def process_chat(user_input):
                     "tool_calls": tool_calls
                 })
                 
+                # Log the interaction
+                log_interaction(user_input, assistant_message, tool_calls)
+
                 # Rerun to update the UI
                 st.rerun()
                 
@@ -222,7 +281,10 @@ for message in st.session_state.messages:
 
 # Check for approval request
 last_msg = st.session_state.messages[-1] if st.session_state.messages else None
+approval_pending = False
+
 if last_msg and last_msg["role"] == "assistant" and "REQ_APPROVAL" in last_msg["content"]:
+    approval_pending = True
     col1, col2 = st.columns(2)
     with col1:
         if st.button("✅ Approve", type="primary", use_container_width=True):
@@ -232,5 +294,9 @@ if last_msg and last_msg["role"] == "assistant" and "REQ_APPROVAL" in last_msg["
             process_chat("Rejected")
 
 # Chat input
-if user_input := st.chat_input("Send a message..."):
+input_placeholder = "Send a message..."
+if approval_pending:
+    input_placeholder = "Please approve or reject the loan request above."
+
+if user_input := st.chat_input(input_placeholder, disabled=approval_pending):
     process_chat(user_input)

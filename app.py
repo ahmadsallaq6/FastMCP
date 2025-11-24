@@ -1,20 +1,26 @@
 from fastapi import FastAPI, HTTPException
-import json
 import uuid
 from models import Customer, Account, LoanRequest, Loan
 from typing import List
+import os
+import pymongo
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI(title="Teller Banking Backend")
 
-# Utility to load JSON
-def load_json(path):
-    with open(path, "r") as f:
-        return json.load(f)
+# MongoDB Connection
+def get_db():
+    mongo_uri = os.getenv("MONGO_URI")
+    if not mongo_uri:
+        # Fallback for local dev if .env is missing
+        mongo_uri = "mongodb://localhost:27017/"
+    
+    client = pymongo.MongoClient(mongo_uri)
+    return client["loan_assistant_db"]
 
-# Utility to save JSON
-def save_json(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=4)
+db = get_db()
 
 
 # ================
@@ -25,20 +31,8 @@ def save_json(path, data):
     description="Returns a lightweight list of all customers containing only customer_id and name."
 )
 def list_customers_basic():
-    customers = load_json("data/customers.json")
-
-    if not isinstance(customers, dict):
-        raise HTTPException(500, "Invalid customers.json structure")
-
-    result = [
-        {
-            "customer_id": data.get("customer_id"),
-            "name": data.get("name")
-        }
-        for data in customers.values()
-    ]
-
-    return result
+    customers = list(db.customers.find({}, {"customer_id": 1, "name": 1, "_id": 0}))
+    return customers
 
 
 # ================
@@ -50,10 +44,10 @@ def list_customers_basic():
     description="Retrieves full customer details including personal info, income, credit score, and employment data."
 )
 def get_customer(customer_id: str):
-    db = load_json("data/customers.json")
-    if customer_id not in db:
+    customer = db.customers.find_one({"customer_id": customer_id}, {"_id": 0})
+    if not customer:
         raise HTTPException(404, "Customer not found")
-    return db[customer_id]
+    return customer
 
 
 # ================
@@ -65,10 +59,15 @@ def get_customer(customer_id: str):
     description="Returns a list of all bank accounts associated with the given customer ID."
 )
 def get_accounts(customer_id: str):
-    db = load_json("data/accounts.json")
-    if customer_id not in db:
+    accounts = list(db.accounts.find({"customer_id": customer_id}, {"_id": 0}))
+    if not accounts:
+        # Check if customer exists to distinguish between no accounts and invalid customer
+        if not db.customers.find_one({"customer_id": customer_id}):
+             raise HTTPException(404, "Customer not found")
+        # If customer exists but has no accounts, return empty list (or 404 as per original logic)
+        # Original logic raised 404 "Accounts not found" if customer_id not in db (which was keyed by customer_id)
         raise HTTPException(404, "Accounts not found")
-    return db[customer_id]
+    return accounts
 
 
 # ================
@@ -80,12 +79,10 @@ def get_accounts(customer_id: str):
     description="Creates a new loan request for the customer and performs a basic eligibility check using income and credit score."
 )
 def apply_for_loan(request: LoanRequest):
-    customers = load_json("data/customers.json")
+    customer = db.customers.find_one({"customer_id": request.customer_id})
 
-    if request.customer_id not in customers:
+    if not customer:
         raise HTTPException(404, "Customer does not exist")
-
-    customer = customers[request.customer_id]
 
     # Very simple loan eligibility check
     if customer["credit_score"] < 600:
@@ -96,8 +93,6 @@ def apply_for_loan(request: LoanRequest):
         status = "approved"
 
     # Create loan record
-    loans = load_json("data/loans.json")
-
     new_loan = {
         "loan_id": "LN-" + str(uuid.uuid4())[:8],
         "customer_id": request.customer_id,
@@ -106,8 +101,11 @@ def apply_for_loan(request: LoanRequest):
         "remaining_balance": request.amount
     }
 
-    loans["loans"].append(new_loan)
-    save_json("data/loans.json", loans)
+    db.loans.insert_one(new_loan)
+    
+    # Remove _id for response
+    if "_id" in new_loan:
+        del new_loan["_id"]
 
     return new_loan
 
@@ -121,8 +119,7 @@ def apply_for_loan(request: LoanRequest):
     description="Returns all existing loans for a specific customer, including loan status and remaining balance."
 )
 def get_customer_loans(customer_id: str):
-    loans = load_json("data/loans.json")["loans"]
-    customer_loans = [l for l in loans if l["customer_id"] == customer_id]
+    customer_loans = list(db.loans.find({"customer_id": customer_id}, {"_id": 0}))
     return customer_loans
 
 
@@ -134,17 +131,15 @@ def get_customer_loans(customer_id: str):
     description="Calculates the customer's Debt-to-Income ratio using monthly income and existing loan obligations. Returns risk level."
 )
 def calculate_dti(customer_id: str):
-    customers = load_json("data/customers.json")
-    loans = load_json("data/loans.json")["loans"]
-
-    if customer_id not in customers:
+    customer = db.customers.find_one({"customer_id": customer_id})
+    
+    if not customer:
         raise HTTPException(404, "Customer not found")
 
-    customer = customers[customer_id]
+    customer_loans = list(db.loans.find({"customer_id": customer_id}))
 
     monthly_income = customer["annual_income"] / 12
-    customer_loans = [l for l in loans if l["customer_id"] == customer_id]
-
+    
     existing_monthly_debt = sum(l["remaining_balance"] / 12 for l in customer_loans)
 
     if monthly_income <= 0:
@@ -205,12 +200,11 @@ def calculate_employment_score(customer):
     description="Returns the customer’s employment stability score based on job type, years of employment, and business history."
 )
 def get_employment_score(customer_id: str):
-    customers = load_json("data/customers.json")
+    customer = db.customers.find_one({"customer_id": customer_id})
 
-    if customer_id not in customers:
+    if not customer:
         raise HTTPException(404, "Customer not found")
 
-    customer = customers[customer_id]
     score = calculate_employment_score(customer)
 
     if score >= 1.0:
