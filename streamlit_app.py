@@ -175,7 +175,7 @@ with st.sidebar:
     # Server URL configuration
     server_url = st.text_input(
         "MCP Server URL",
-        value="https://dithionous-dania-unterminated.ngrok-free.dev/sse",
+        value="https://loan-assistant.fastmcp.app/mcp",
         help="Enter your MCP server URL"
     )
     
