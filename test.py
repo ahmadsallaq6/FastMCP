@@ -1,10 +1,14 @@
-from openai import OpenAI
+from openai import AzureOpenAI
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_KEY"))
+client = AzureOpenAI(
+    api_key=os.getenv("AZURE_OPENAI_KEY"),
+    api_version="2025-03-01-preview",
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+)
 
 # We start with no history
 previous_response_id = None
@@ -16,13 +20,13 @@ while True:
     if user_input.lower() in ["quit", "exit"]:
         break
 
-    # 2. Call OpenAI (The "Cloud-to-Cloud" magic happens here)
+    # 2. Call Azure OpenAI (The "Cloud-to-Cloud" magic happens here)
     # We pass 'previous_response_id' so the model remembers what we just said.
     print("Thinking...", end="\r")
     
     try:
         response = client.responses.create(
-            model="gpt-4.1", 
+            model=os.getenv("AZURE_OPENAI_GPT_DEPLOYMENT_NAME", "gpt-4.1"), 
             input=user_input,
             previous_response_id=previous_response_id, # <--- Maintains Memory
             tools=[

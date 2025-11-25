@@ -1,5 +1,5 @@
 import streamlit as st
-from openai import OpenAI
+from openai import AzureOpenAI
 import os
 from dotenv import load_dotenv
 from datetime import datetime
@@ -168,9 +168,13 @@ if "pending_approval" not in st.session_state:
 
 if "client" not in st.session_state:
     try:
-        st.session_state.client = OpenAI(api_key=os.getenv("OPENAI_KEY"))
+        st.session_state.client = AzureOpenAI(
+            api_key=os.getenv("AZURE_OPENAI_KEY"),
+            api_version="2025-03-01-preview",
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+        )
     except Exception as e:
-        st.error(f"Failed to initialize OpenAI client: {e}")
+        st.error(f"Failed to initialize Azure OpenAI client: {e}")
         st.stop()
 
 # Helper function to get MCP tools configuration
@@ -211,10 +215,10 @@ with st.sidebar:
         help="Enter your MCP server URL"
     )
     
-    # Model selection
+    # Model selection - uses Azure OpenAI deployment name
     model = st.selectbox(
         "Model",
-        ["gpt-4.1", "gpt-4", "gpt-3.5-turbo"],
+        [os.getenv("AZURE_OPENAI_GPT_DEPLOYMENT_NAME", "gpt-4.1")],
         index=0
     )
     
@@ -242,7 +246,7 @@ with st.sidebar:
     st.divider()
     
     st.caption("💬 Loans Assistant ChatBot")
-    st.caption("Powered by OpenAI & FastMCP")
+    st.caption("Powered by Azure OpenAI & FastMCP")
 
 # Main chat interface
 st.title("💬 Loans Assistant ChatBot")
