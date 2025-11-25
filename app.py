@@ -3,9 +3,9 @@ import uuid
 from models import Customer, Account, LoanRequest, Loan
 from typing import List
 import os
-import pymongo
+from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
-import requests
+import httpx
 
 load_dotenv()
 
@@ -18,7 +18,7 @@ def get_db():
         # Fallback for local dev if .env is missing
         mongo_uri = "mongodb://localhost:27017/"
     
-    client = pymongo.MongoClient(mongo_uri)
+    client = AsyncIOMotorClient(mongo_uri)
     return client["loan_assistant_db"]
 
 db = get_db()
@@ -31,8 +31,9 @@ db = get_db()
     "/customers/basic",
     description="Returns a lightweight list of all customers containing only customer_id and name."
 )
-def list_customers_basic():
-    customers = list(db.customers.find({}, {"customer_id": 1, "name": 1, "_id": 0}))
+async def list_customers_basic():
+    cursor = db.customers.find({}, {"customer_id": 1, "name": 1, "_id": 0})
+    customers = await cursor.to_list(length=None)
     return customers
 
 
@@ -44,8 +45,8 @@ def list_customers_basic():
     response_model=Customer,
     description="Retrieves full customer details including personal info, income, credit score, and employment data."
 )
-def get_customer(customer_id: str):
-    customer = db.customers.find_one({"customer_id": customer_id}, {"_id": 0})
+async def get_customer(customer_id: str):
+    customer = await db.customers.find_one({"customer_id": customer_id}, {"_id": 0})
     if not customer:
         raise HTTPException(404, "Customer not found")
     return customer
@@ -59,11 +60,12 @@ def get_customer(customer_id: str):
     response_model=List[Account],
     description="Returns a list of all bank accounts associated with the given customer ID."
 )
-def get_accounts(customer_id: str):
-    accounts = list(db.accounts.find({"customer_id": customer_id}, {"_id": 0}))
+async def get_accounts(customer_id: str):
+    cursor = db.accounts.find({"customer_id": customer_id}, {"_id": 0})
+    accounts = await cursor.to_list(length=None)
     if not accounts:
         # Check if customer exists to distinguish between no accounts and invalid customer
-        if not db.customers.find_one({"customer_id": customer_id}):
+        if not await db.customers.find_one({"customer_id": customer_id}):
              raise HTTPException(404, "Customer not found")
         # If customer exists but has no accounts, return empty list (or 404 as per original logic)
         # Original logic raised 404 "Accounts not found" if customer_id not in db (which was keyed by customer_id)
@@ -79,8 +81,8 @@ def get_accounts(customer_id: str):
     response_model=Loan,
     description="Creates a new loan request for the customer and performs a basic eligibility check using income and credit score."
 )
-def apply_for_loan(request: LoanRequest):
-    customer = db.customers.find_one({"customer_id": request.customer_id})
+async def apply_for_loan(request: LoanRequest):
+    customer = await db.customers.find_one({"customer_id": request.customer_id})
 
     if not customer:
         raise HTTPException(404, "Customer does not exist")
@@ -99,10 +101,11 @@ def apply_for_loan(request: LoanRequest):
         "customer_id": request.customer_id,
         "amount": request.amount,
         "status": status,
-        "remaining_balance": request.amount
+        "remaining_balance": request.amount,
+        "purpose": request.purpose
     }
 
-    db.loans.insert_one(new_loan)
+    await db.loans.insert_one(new_loan)
     
     # Remove _id for response
     if "_id" in new_loan:
@@ -119,8 +122,9 @@ def apply_for_loan(request: LoanRequest):
     response_model=List[Loan],
     description="Returns all existing loans for a specific customer, including loan status and remaining balance."
 )
-def get_customer_loans(customer_id: str):
-    customer_loans = list(db.loans.find({"customer_id": customer_id}, {"_id": 0}))
+async def get_customer_loans(customer_id: str):
+    cursor = db.loans.find({"customer_id": customer_id}, {"_id": 0})
+    customer_loans = await cursor.to_list(length=None)
     return customer_loans
 
 
@@ -131,13 +135,14 @@ def get_customer_loans(customer_id: str):
     "/customers/{customer_id}/dti",
     description="Calculates the customer's Debt-to-Income ratio using monthly income and existing loan obligations. Returns risk level."
 )
-def calculate_dti(customer_id: str):
-    customer = db.customers.find_one({"customer_id": customer_id})
+async def calculate_dti(customer_id: str):
+    customer = await db.customers.find_one({"customer_id": customer_id})
     
     if not customer:
         raise HTTPException(404, "Customer not found")
 
-    customer_loans = list(db.loans.find({"customer_id": customer_id}))
+    cursor = db.loans.find({"customer_id": customer_id})
+    customer_loans = await cursor.to_list(length=None)
 
     monthly_income = customer["annual_income"] / 12
     
@@ -200,8 +205,8 @@ def calculate_employment_score(customer):
     "/customers/{customer_id}/employment_score",
     description="Returns the customer’s employment stability score based on job type, years of employment, and business history."
 )
-def get_employment_score(customer_id: str):
-    customer = db.customers.find_one({"customer_id": customer_id})
+async def get_employment_score(customer_id: str):
+    customer = await db.customers.find_one({"customer_id": customer_id})
 
     if not customer:
         raise HTTPException(404, "Customer not found")
@@ -232,7 +237,7 @@ def get_employment_score(customer_id: str):
 # LINKUP WEB SEARCH ENDPOINT
 # ============================
 @app.get("/search/web", description="Linkup API search")
-def linkup_web_search(query: str):
+async def linkup_web_search(query: str):
     LINKUP_API_KEY = os.getenv("LINKUP_API_KEY")
     if not LINKUP_API_KEY:
         raise HTTPException(500, "LINKUP_API_KEY missing")
@@ -252,10 +257,11 @@ def linkup_web_search(query: str):
         "Content-Type": "application/json",
     }
 
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-    except Exception as e:
-        raise HTTPException(500, f"Request failed: {str(e)}")
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, json=payload, headers=headers)
+        except Exception as e:
+            raise HTTPException(500, f"Request failed: {str(e)}")
 
     if response.status_code != 200:
         raise HTTPException(response.status_code, response.text)

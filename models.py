@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 class Customer(BaseModel):
     customer_id: str
@@ -19,7 +19,7 @@ class Account(BaseModel):
 class LoanRequest(BaseModel):
     customer_id: str
     amount: float
-    purpose: str
+    purpose: Literal["cars", "house", "personal", "business", "other"]
 
 class Loan(BaseModel):
     loan_id: str
@@ -27,3 +27,4 @@ class Loan(BaseModel):
     amount: float
     status: str
     remaining_balance: float
+    purpose: str
