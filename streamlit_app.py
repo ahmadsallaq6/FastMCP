@@ -175,7 +175,7 @@ with st.sidebar:
     # Server URL configuration
     server_url = st.text_input(
         "MCP Server URL",
-        value="https://stubbly-cathryn-broadish.ngrok-free.dev/sse",
+        value="https://dithionous-dania-unterminated.ngrok-free.dev/sse",
         help="Enter your MCP server URL"
     )
     
@@ -234,7 +234,7 @@ def process_chat(user_input):
                 if len(st.session_state.messages) == 1:
                      api_input = (
                         "System Instructions: You are a helpful loan assistant. "
-                        "You have access to tools including 'apply_for_loan'. "
+                        "You have access to tools including 'apply_for_loan' and 'search'. "
                         "CRITICAL SAFETY RULE: You must NEVER call the 'apply_for_loan' tool without explicit user approval. "
                         "When the user wants a loan and you have gathered necessary info, you must STOP and ask for approval. "
                         "To ask for approval, output the exact text 'REQ_APPROVAL' followed by a summary of the loan details. "
@@ -243,6 +243,7 @@ def process_chat(user_input):
                         "Wait for the user to click one (which will send 'Approved' or 'Rejected' to you). "
                         "If 'Approved', ONLY THEN call the 'apply_for_loan' tool. "
                         "If 'Rejected', do not call the tool. "
+                        "When the user asks a question requesting information or knowledge, use the 'search' tool to find relevant information and provide accurate answers. "
                         "\n\nUser: " + user_input
                      )
 

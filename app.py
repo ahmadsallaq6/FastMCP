@@ -5,6 +5,7 @@ from typing import List
 import os
 import pymongo
 from dotenv import load_dotenv
+import requests
 
 load_dotenv()
 
@@ -226,3 +227,37 @@ def get_employment_score(customer_id: str):
         "employment_score": score,
         "stability_level": level
     }
+
+# ============================
+# LINKUP WEB SEARCH ENDPOINT
+# ============================
+@app.get("/search/web", description="Linkup API search")
+def linkup_web_search(query: str):
+    LINKUP_API_KEY = os.getenv("LINKUP_API_KEY")
+    if not LINKUP_API_KEY:
+        raise HTTPException(500, "LINKUP_API_KEY missing")
+
+    # NEW Linkup endpoint (working in 2025)
+    url = "https://api.linkup.so/v1/search"
+
+    payload = {
+        "q": query,
+        "outputType": "searchResults",
+        "includeImages": False,
+        "depth": "standard"
+    }
+
+    headers = {
+        "Authorization": f"Bearer {LINKUP_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+    except Exception as e:
+        raise HTTPException(500, f"Request failed: {str(e)}")
+
+    if response.status_code != 200:
+        raise HTTPException(response.status_code, response.text)
+
+    return response.json()
