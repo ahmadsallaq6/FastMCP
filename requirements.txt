@@ -4,3 +4,4 @@ python-dotenv>=1.0.0
 pymongo
 requests>=2.28.0
 linkup
+motor
