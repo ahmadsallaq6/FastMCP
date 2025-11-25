@@ -27,6 +27,58 @@ def get_mongo_collection():
         return db["logs"]
     return None
 
+def get_conversations_collection():
+    client = get_mongo_client()
+    if client:
+        db = client["loan_assistant_db"]
+        return db["conversations"]
+    return None
+
+def save_message(role, content, tool_calls=None):
+    collection = get_conversations_collection()
+    if collection is None:
+        return
+
+    if "conversation_id" not in st.session_state or not st.session_state.conversation_id:
+        st.session_state.conversation_id = str(uuid.uuid4())
+        # Create new conversation document
+        title = content[:30] + "..." if len(content) > 30 else content
+        collection.insert_one({
+            "conversation_id": st.session_state.conversation_id,
+            "title": title,
+            "created_at": datetime.now(),
+            "messages": []
+        })
+
+    message = {
+        "role": role,
+        "content": content,
+        "timestamp": datetime.now(),
+    }
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+
+    update_data = {"$push": {"messages": message}}
+    
+    # Save the current previous_response_id to the conversation
+    if "previous_response_id" in st.session_state:
+        update_data["$set"] = {"last_response_id": st.session_state.previous_response_id}
+
+    collection.update_one(
+        {"conversation_id": st.session_state.conversation_id},
+        update_data
+    )
+
+def load_conversation(conversation_id):
+    collection = get_conversations_collection()
+    if collection is not None:
+        conv = collection.find_one({"conversation_id": conversation_id})
+        if conv:
+            st.session_state.messages = conv.get("messages", [])
+            st.session_state.conversation_id = conversation_id
+            st.session_state.previous_response_id = conv.get("last_response_id")
+            # We don't rerun here, we let the main loop handle it or rerun from the caller
+
 def log_interaction(user_input, assistant_message, tool_calls):
     log_entry = {
         "timestamp": datetime.now().isoformat(),
@@ -100,6 +152,9 @@ if "messages" not in st.session_state:
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 
+if "conversation_id" not in st.session_state:
+    st.session_state.conversation_id = None
+
 if "previous_response_id" not in st.session_state:
     st.session_state.previous_response_id = None
 
@@ -133,11 +188,24 @@ with st.sidebar:
     
     st.divider()
     
-    # Clear chat button
-    if st.button("🗑️ Clear Chat", use_container_width=True):
+    # New Chat button
+    if st.button("➕ New Chat", use_container_width=True):
         st.session_state.messages = []
+        st.session_state.conversation_id = None
         st.session_state.previous_response_id = None
         st.rerun()
+        
+    st.subheader("History")
+    
+    # Fetch conversations
+    conv_collection = get_conversations_collection()
+    if conv_collection is not None:
+        conversations = list(conv_collection.find().sort("created_at", -1))
+        for conv in conversations:
+            # Use a unique key for each button
+            if st.button(conv.get("title", "Untitled"), key=conv["conversation_id"], use_container_width=True):
+                load_conversation(conv["conversation_id"])
+                st.rerun()
     
     st.divider()
     
@@ -150,6 +218,7 @@ st.title("💬 Loans Assistant ChatBot")
 def process_chat(user_input):
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": user_input})
+    save_message("user", user_input)
     
     # Display user message immediately
     with st.chat_message("user", avatar="👤"):
@@ -249,6 +318,7 @@ def process_chat(user_input):
                     "content": assistant_message,
                     "tool_calls": tool_calls
                 })
+                save_message("assistant", assistant_message, tool_calls)
                 
                 # Log the interaction
                 log_interaction(user_input, assistant_message, tool_calls)
