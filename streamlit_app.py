@@ -76,7 +76,10 @@ def load_conversation(conversation_id):
         if conv:
             st.session_state.messages = conv.get("messages", [])
             st.session_state.conversation_id = conversation_id
-            st.session_state.previous_response_id = conv.get("last_response_id")
+            # Don't restore previous_response_id - these IDs expire quickly on OpenAI's side
+            # Treating loaded history as context for a fresh request avoids 400 errors
+            st.session_state.previous_response_id = None
+            st.session_state.pending_approval = None
             # We don't rerun here, we let the main loop handle it or rerun from the caller
 
 def log_interaction(user_input, assistant_message, tool_calls):
@@ -158,12 +161,41 @@ if "conversation_id" not in st.session_state:
 if "previous_response_id" not in st.session_state:
     st.session_state.previous_response_id = None
 
+if "pending_approval" not in st.session_state:
+    # { response_id, tool_call_id, tool_name }
+    st.session_state.pending_approval = None
+
+
 if "client" not in st.session_state:
     try:
         st.session_state.client = OpenAI(api_key=os.getenv("OPENAI_KEY"))
     except Exception as e:
         st.error(f"Failed to initialize OpenAI client: {e}")
         st.stop()
+
+# Helper function to get MCP tools configuration
+def get_mcp_tools_config(mcp_server_url):
+    return [
+        {
+            "type": "mcp",
+            "server_label": "MCP-server",
+            "server_url": mcp_server_url,
+            "require_approval": {
+                "always": {"tool_names": ["apply_for_loan"]},
+                "never": {
+                    "tool_names": [
+                        "list_customers_basic_customers_basic_get",
+                        "get_customer_customers",
+                        "get_accounts_customers",
+                        "get_customer_loans_loans",
+                        "calculate_dti_customers",
+                        "get_employment_score_customers",
+                        "linkup_web_search_search_web_get"
+                    ]
+                }
+            }
+        }
+    ]
 
 # Initialize MongoDB connection
 get_mongo_client()
@@ -175,7 +207,7 @@ with st.sidebar:
     # Server URL configuration
     server_url = st.text_input(
         "MCP Server URL",
-        value="https://loan-assistant.fastmcp.app/mcp",
+        value="https://stubbly-cathryn-broadish.ngrok-free.dev/sse",
         help="Enter your MCP server URL"
     )
     
@@ -215,6 +247,192 @@ with st.sidebar:
 # Main chat interface
 st.title("💬 Loans Assistant ChatBot")
 
+def handle_stream(stream, tools_container, text_placeholder, assistant_message="", tool_calls=None):
+    if tool_calls is None:
+        tool_calls = []
+    
+    tool_placeholders = {}
+    approval_needed = False  # Track if approval is needed, but don't return early
+    
+    for event in stream:
+        # Debug: uncomment to see all events
+        # st.write(f"DEBUG Event: {event.type}")
+        # if hasattr(event, 'item'):
+        #     item = event.item
+        #     st.write(f"DEBUG Item type attr: {getattr(item, 'type', 'N/A')}")
+        #     st.write(f"DEBUG Item vars: {vars(item) if hasattr(item, '__dict__') else item}")
+        
+        # Track response id for possible follow-up approvals
+        if event.type == 'response.created':
+            st.session_state.previous_response_id = event.response.id
+        
+        elif event.type == 'response.output_item.added':
+            item = event.item
+            item_type = getattr(item, 'type', None)
+            
+            # MCP approval request - this is when a tool requires user approval
+            if item_type == 'mcp_approval_request':
+                # Get the approval request ID from the item
+                approval_id = getattr(item, 'id', None)
+                tool_name = getattr(item, 'name', None)
+                arguments = getattr(item, 'arguments', None)
+                server_label = getattr(item, 'server_label', None)
+                
+                st.session_state.pending_approval = {
+                    "response_id": st.session_state.previous_response_id,
+                    "approval_request_id": approval_id,
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                    "server_label": server_label,
+                }
+                # Mark that approval is needed, but DON'T return early
+                # We need to let the stream complete so the response is stored
+                approval_needed = True
+            
+            # Normal tool / MCP execution (no approval required)
+            if item_type in ['mcp_call', 'tool_call', 'function_call', 'function']:
+                ph = tools_container.empty()
+                item_id = getattr(item, 'id', None) if not isinstance(item, dict) else item.get('id')
+                item_name = getattr(item, 'name', None) if not isinstance(item, dict) else item.get('name')
+                item_args = getattr(item, 'arguments', None) if not isinstance(item, dict) else item.get('arguments')
+
+                tool_placeholders[item_id] = ph
+                with ph.status(f"🛠️ Calling tool: {item_name}...", state="running"):
+                    st.write("Input:")
+                    st.code(item_args)
+            
+        elif event.type == 'response.output_text.delta':
+            if event.delta:
+                assistant_message += event.delta
+                # Escape dollar signs for display
+                display_msg = assistant_message.replace("$", "\\$")
+                text_placeholder.markdown(display_msg + "▌")
+
+        elif event.type == 'response.output_item.done':
+            item = event.item
+            item_type = getattr(item, 'type', None)
+            if isinstance(item, dict):
+                item_type = item.get('type')
+
+            if item_type in [
+                'mcp_call',
+                'tool_call',
+                'function_call',
+                'function',
+            ]:
+                item_id = getattr(item, 'id', None)
+                ph = tool_placeholders.get(item_id)
+                if ph:
+                    item_name = getattr(item, 'name', None)
+                    item_args = getattr(item, 'arguments', None)
+                    item_output = getattr(item, 'output', None)
+
+                    with ph.status(f"🛠️ Used tool: {item_name}", state="complete"):
+                        st.write("Input:")
+                        st.code(item_args)
+                        st.write("Output:")
+                        st.code(item_output)
+
+                tool_calls.append(
+                    {
+                        "name": getattr(item, 'name', None),
+                        "arguments": getattr(item, 'arguments', None),
+                        "result": getattr(item, 'output', None),
+                    }
+                )
+                
+    return assistant_message, tool_calls, approval_needed
+
+def handle_approval(approved):
+    approval_data = st.session_state.pending_approval
+    # If there is no pending approval recorded, do nothing.
+    if not approval_data:
+        return
+
+    # Clear pending approval immediately so UI buttons disappear
+    st.session_state.pending_approval = None
+
+    # If there's no approval request ID or response ID, show a message
+    if not approval_data.get("approval_request_id") or not approval_data.get("response_id"):
+        msg = "Tool action rejected by user." if not approved else "Unable to continue tool call (missing identifiers)."
+        st.session_state.messages.append({"role": "assistant", "content": msg})
+        save_message("assistant", msg)
+        return
+
+    # Get the last assistant message so we can append to it
+    last_msg_index = None
+    for i in range(len(st.session_state.messages) - 1, -1, -1):
+        if st.session_state.messages[i]["role"] == "assistant":
+            last_msg_index = i
+            break
+
+    if last_msg_index is None:
+        base_content = ""
+        base_tools = []
+    else:
+        last_msg = st.session_state.messages[last_msg_index]
+        base_content = last_msg.get("content", "")
+        base_tools = last_msg.get("tool_calls", [])
+
+    with st.chat_message("assistant", avatar="🤖"):
+        tools_container = st.container()
+        text_placeholder = st.empty()
+
+        try:
+            approval_request_id = approval_data["approval_request_id"]
+            
+            # Build the MCP approval response input item
+            mcp_approval_response = {
+                "type": "mcp_approval_response",
+                "approval_request_id": approval_request_id,
+                "approve": approved,
+            }
+            if not approved:
+                mcp_approval_response["reason"] = "User rejected the tool call"
+            
+            # Continue with previous_response_id - now valid since we let stream complete
+            stream = st.session_state.client.responses.create(
+                model=model,
+                previous_response_id=approval_data["response_id"],
+                input=[mcp_approval_response],
+                store=True,
+                tools=get_mcp_tools_config(server_url),
+                stream=True,
+            )
+
+            new_message, new_tool_calls, approval_needed = handle_stream(
+                stream, tools_container, text_placeholder, base_content, base_tools
+            )
+
+            # Final display update
+            display_message = new_message.replace("$", "\\$")
+            text_placeholder.markdown(display_message)
+
+            # Update or append the assistant message in session state
+            if last_msg_index is None:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": new_message, "tool_calls": new_tool_calls}
+                )
+            else:
+                st.session_state.messages[last_msg_index] = {
+                    "role": "assistant",
+                    "content": new_message,
+                    "tool_calls": new_tool_calls,
+                }
+            
+            # Save to MongoDB and log the interaction
+            save_message("assistant", new_message, new_tool_calls)
+            log_interaction(f"[Approval: {'approved' if approved else 'rejected'}] {approval_data.get('tool_name', 'unknown')}", new_message, new_tool_calls)
+
+            # Always rerun to refresh UI (hide approval buttons, enable input)
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"❌ Error: {e}")
+            # Reset state on error to prevent getting stuck
+            st.session_state.previous_response_id = None
+            st.rerun()
+
 def process_chat(user_input):
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -232,85 +450,32 @@ def process_chat(user_input):
                 api_input = user_input
                 # Check if this is the first user message (messages list has 1 item which is the user message we just added)
                 if len(st.session_state.messages) == 1:
-                     api_input = (
-                        "System Instructions: You are a helpful loan assistant. "
-                        "You have access to tools including 'apply_for_loan' and 'search'. "
-                        "CRITICAL SAFETY RULE: You must NEVER call the 'apply_for_loan' tool without explicit user approval. "
-                        "When the user wants a loan and you have gathered necessary info, you must STOP and ask for approval. "
-                        "To ask for approval, output the exact text 'REQ_APPROVAL' followed by a summary of the loan details. "
-                        "Do NOT call the tool yet. "
-                        "I will show the user 'Approve' and 'Reject' buttons. "
-                        "Wait for the user to click one (which will send 'Approved' or 'Rejected' to you). "
-                        "If 'Approved', ONLY THEN call the 'apply_for_loan' tool. "
-                        "If 'Rejected', do not call the tool. "
-                        "When the user asks a question requesting information or knowledge, use the 'search' tool to find relevant information and provide accurate answers. "
-                        "\n\nUser: " + user_input
-                     )
+                        api_input = (
+                            "System Instructions: You are a helpful loan assistant. "
+                            "You have access to tools including 'apply_for_loan' and 'search'. "
+                            "When the user asks a question requesting information or knowledge, use the 'search' tool to find relevant information and provide accurate answers. "
+                            "\n\nUser: " + user_input
+                        )
 
                 # Call OpenAI API with MCP tools
                 stream = st.session_state.client.responses.create(
                     model=model,
                     input=api_input,
                     previous_response_id=st.session_state.previous_response_id,
-                    tools=[
-                        {
-                            "type": "mcp",
-                            "server_label": "MCP-server",
-                            "server_url": server_url,
-                            "require_approval": "never",
-                        },
-                    ],
+                    store=True,  # Required for previous_response_id to work with approvals
+                    tools=get_mcp_tools_config(server_url),
                     stream=True,
                 )
                 
-                assistant_message = ""
-                tool_calls = []
-                tool_placeholders = {}
-                
-                # Container for tools (appears before text)
                 tools_container = st.container()
-                # Placeholder for text
                 text_placeholder = st.empty()
                 
-                for event in stream: 
-                    if event.type == 'response.created':
-                        st.session_state.previous_response_id = event.response.id
-                        
-                    elif event.type == 'response.output_text.delta':
-                        if event.delta:
-                            assistant_message += event.delta
-                            # Escape dollar signs for display and hide REQ_APPROVAL
-                            display_msg = assistant_message.replace("$", "\\$").replace("REQ_APPROVAL", "")
-                            text_placeholder.markdown(display_msg + "▌")
-                            
-                    elif event.type == 'response.output_item.added':
-                        item = event.item
-                        if item.type == 'mcp_call':
-                            ph = tools_container.empty()
-                            tool_placeholders[item.id] = ph
-                            with ph.status(f"🛠️ Calling tool: {item.name}...", state="running"):
-                                st.write("Input:")
-                                st.code(item.arguments)
-                                
-                    elif event.type == 'response.output_item.done':
-                        item = event.item
-                        if item.type == 'mcp_call':
-                            ph = tool_placeholders.get(item.id)
-                            if ph:
-                                with ph.status(f"🛠️ Used tool: {item.name}", state="complete"):
-                                    st.write("Input:")
-                                    st.code(item.arguments)
-                                    st.write("Output:")
-                                    st.code(item.output)
-                            
-                            tool_calls.append({
-                                "name": item.name,
-                                "arguments": item.arguments,
-                                "result": item.output
-                            })
+                assistant_message, tool_calls, approval_needed = handle_stream(
+                    stream, tools_container, text_placeholder
+                )
                 
                 # Final display update
-                display_message = assistant_message.replace("$", "\\$").replace("REQ_APPROVAL", "")
+                display_message = assistant_message.replace("$", "\\$")
                 text_placeholder.markdown(display_message)
                 
                 # Add assistant message to chat history (store original for consistency)
@@ -324,8 +489,9 @@ def process_chat(user_input):
                 # Log the interaction
                 log_interaction(user_input, assistant_message, tool_calls)
 
-                # Rerun to update the UI
-                st.rerun()
+                # Rerun if approval needed
+                if approval_needed:
+                    st.rerun()
                 
             except Exception as e:
                 st.error(f"❌ Error: {e}")
@@ -347,22 +513,24 @@ for message in st.session_state.messages:
                     st.code(str(tool_call.get('result', '')))
 
         # Escape dollar signs for display to prevent LaTeX rendering issues
-        display_content = content.replace("$", "\\$").replace("REQ_APPROVAL", "")
+        display_content = content.replace("$", "\\$")
         st.markdown(display_content)
 
 # Check for approval request
-last_msg = st.session_state.messages[-1] if st.session_state.messages else None
-approval_pending = False
+approval_pending = st.session_state.pending_approval is not None
 
-if last_msg and last_msg["role"] == "assistant" and "REQ_APPROVAL" in last_msg["content"]:
-    approval_pending = True
+if approval_pending:
+    # Show explanation text above the buttons
+    tool_name = st.session_state.pending_approval.get("tool_name", "a tool")
+    st.info(f"🔐 **Action Required:** The assistant wants to use **{tool_name}**. Please review and approve or reject this action.")
+    
     col1, col2 = st.columns(2)
     with col1:
         if st.button("✅ Approve", type="primary", use_container_width=True):
-            process_chat("Approved")
+            handle_approval(True)
     with col2:
         if st.button("❌ Reject", type="secondary", use_container_width=True):
-            process_chat("Rejected")
+            handle_approval(False)
 
 # Chat input
 input_placeholder = "Send a message..."
