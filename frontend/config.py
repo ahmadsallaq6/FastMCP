@@ -29,7 +29,7 @@ AZURE_OPENAI_GPT_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_GPT_DEPLOYMENT_NAME",
 # Match by substring in tool name (case-insensitive)
 TOOLS_REQUIRING_APPROVAL_PATTERNS = [
     "apply_for_loan_loans_apply_post",
-    "send_custom_email",
+    "send_custom_email"
 ]
 
 
@@ -51,8 +51,8 @@ def tool_requires_approval(tool_name: str) -> bool:
 # ======================
 
 PAGE_CONFIG = {
-    "page_title": "Loans Assistant ChatBot 💬",
-    "page_icon": "💬",
+    "page_title": "Loans Assistant ChatBot 🏦",
+    "page_icon": "🏦",
     "layout": "centered",
     "initial_sidebar_state": "expanded"
 }
