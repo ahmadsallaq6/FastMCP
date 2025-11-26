@@ -5,7 +5,7 @@ Handles streaming responses, tool execution, and approval workflows.
 
 import streamlit as st
 import json
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Union
 
 import sys
 import os
@@ -32,7 +32,11 @@ def fetch_mcp_tools(_server_url: str) -> Tuple[List, List[Dict]]:
     return tools, mcp_client.get_openai_tools_config(tools)
 
 
-def execute_tool_locally(tool_name: str, arguments: dict, mcp_client: MCPClient) -> Dict:
+def execute_tool_locally(
+    tool_name: str,
+    arguments: dict,
+    mcp_client: MCPClient,
+) -> Union[Dict[str, Any], List[Any]]:
     """Execute a tool on the local MCP server.
     
     Args:
@@ -86,6 +90,8 @@ def handle_stream_with_local_tools(
             if item_type == 'function_call':
                 item_id = getattr(item, 'id', None)
                 item_name = getattr(item, 'name', None)
+                if not isinstance(item_name, str):
+                    continue
                 
                 if not tool_requires_approval(item_name):
                     ph = tools_container.empty()
@@ -106,6 +112,8 @@ def handle_stream_with_local_tools(
             if item_type == 'function_call':
                 item_id = getattr(item, 'id', None)
                 item_name = getattr(item, 'name', None)
+                if not isinstance(item_name, str):
+                    continue
                 item_args = getattr(item, 'arguments', None)
                 call_id = getattr(item, 'call_id', item_id)
                 
@@ -297,11 +305,27 @@ def handle_approval(approved: bool, server_url: str, model: str):
         server_url: URL of the MCP server
         model: Model name to use
     """
-    approval_data = st.session_state.pending_approval
-    if not approval_data:
+    if st.session_state.pending_approval:
+        st.session_state.processing_approval = {
+            "approved": approved,
+            "data": st.session_state.pending_approval
+        }
+        st.session_state.pending_approval = None
+
+
+def process_pending_approval(server_url: str, model: str):
+    """Process a pending approval action.
+    
+    Args:
+        server_url: URL of the MCP server
+        model: Model name to use
+    """
+    approval_action = st.session_state.processing_approval
+    if not approval_action:
         return
 
-    st.session_state.pending_approval = None
+    approved = approval_action["approved"]
+    approval_data = approval_action["data"]
     
     mcp_client = MCPClient(server_url)
     _, openai_tools = fetch_mcp_tools(server_url)
@@ -437,9 +461,11 @@ def handle_approval(approved: bool, server_url: str, model: str):
                 new_tool_calls
             )
 
+            st.session_state.processing_approval = None
             st.rerun()
 
         except Exception as e:
             st.error(f"❌ Error: {e}")
             st.session_state.previous_response_id = None
+            st.session_state.processing_approval = None
             st.rerun()

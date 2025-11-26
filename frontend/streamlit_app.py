@@ -19,7 +19,7 @@ from ui import (
     initialize_connections,
 )
 from session import init_session_state
-from chat import process_chat, handle_approval, fetch_mcp_tools
+from chat import process_chat, handle_approval, fetch_mcp_tools, process_pending_approval
 
 
 def main():
@@ -41,6 +41,10 @@ def main():
     
     # Display existing chat messages
     render_chat_messages(st.session_state.messages)
+    
+    # Check if we are processing an approval
+    if st.session_state.processing_approval:
+        process_pending_approval(server_url, model)
     
     # Check if approval is pending
     approval_pending = st.session_state.pending_approval is not None

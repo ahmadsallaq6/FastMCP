@@ -27,7 +27,10 @@ AZURE_OPENAI_GPT_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_GPT_DEPLOYMENT_NAME",
 
 # Tools that require user approval before execution
 # Match by substring in tool name (case-insensitive)
-TOOLS_REQUIRING_APPROVAL_PATTERNS = ["apply_for_loan_loans_apply_post"]
+TOOLS_REQUIRING_APPROVAL_PATTERNS = [
+    "apply_for_loan_loans_apply_post",
+    "send_custom_email",
+]
 
 
 def tool_requires_approval(tool_name: str) -> bool:
@@ -91,6 +94,7 @@ THEME_COLORS = {
         "primary_button_hover_bg": "#f4f2ff",
         "primary_button_hover_text": "#0f172a",
         "primary_button_hover_shadow": "0 10px 30px rgba(255, 255, 255, 0.35)",
+        "approval_button_text": "#020617",
     },
     "light": {
         "bg_primary": "#f4f6ff",
@@ -126,6 +130,7 @@ THEME_COLORS = {
         "primary_button_hover_bg": "linear-gradient(135deg, #6d28d9 0%, #5b21b6 100%)",
         "primary_button_hover_text": "#ffffff",
         "primary_button_hover_shadow": "0 8px 25px rgba(124, 58, 237, 0.45)",
+        "approval_button_text": "#111827",
     }
 }
 
@@ -143,6 +148,7 @@ def get_custom_css(theme: str = "dark") -> str:
         f"radial-gradient(circle at 15% 20%, {colors['bg_secondary']} 0%, "
         f"{colors['bg_primary']} 55%, {colors['bg_primary']} 100%)"
     )
+    approval_button_text = colors.get("approval_button_text", colors["primary_button_text"])
 
     return f"""
     <style>
@@ -304,6 +310,73 @@ def get_custom_css(theme: str = "dark") -> str:
         padding: 1.1rem 1.25rem;
         box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
         margin-top: 0.5rem;
+    }}
+
+    .approval-metadata {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.75rem;
+        margin: 0.5rem 0 1rem;
+    }}
+
+    .approval-chip {{
+        background: {colors['card_bg']};
+        border: 1px solid {colors['panel_border']};
+        border-radius: 14px;
+        padding: 0.65rem 0.85rem;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }}
+
+    .approval-chip__label {{
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: {colors['muted_text']};
+        margin-bottom: 0.15rem;
+        font-weight: 600;
+    }}
+
+    .approval-chip__value {{
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: {colors['text_primary']};
+        word-break: break-word;
+    }}
+
+    .approval-body {{
+        background: {colors['card_bg']};
+        border: 1px solid {colors['panel_border']};
+        border-radius: 16px;
+        padding: 1.1rem 1.25rem;
+        margin-bottom: 1rem;
+        line-height: 1.7;
+    }}
+
+    .approval-body__label {{
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: {colors['muted_text']};
+        margin-bottom: 0.45rem;
+        font-weight: 600;
+    }}
+
+    .approval-body p {{
+        margin: 0 0 0.6rem;
+        color: {colors['text_primary']};
+    }}
+
+    .approval-body p:last-child {{
+        margin-bottom: 0;
+    }}
+
+    .approval-json__label {{
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: {colors['muted_text']};
+        margin-bottom: 0.55rem;
+        font-weight: 600;
     }}
 
     .approval-json pre {{
@@ -497,6 +570,10 @@ def get_custom_css(theme: str = "dark") -> str:
     
     .stButton > button:active {{
         transform: translateY(-1px);
+    }}
+
+    .approve-button-wrapper .stButton > button {{
+        color: {approval_button_text};
     }}
 
     button[data-testid="baseButton-theme_toggle"] {{
