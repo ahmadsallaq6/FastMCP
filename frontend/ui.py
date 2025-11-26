@@ -56,9 +56,9 @@ def setup_page() -> None:
         st.session_state._page_configured = True
 
     if "theme" not in st.session_state:
-        st.session_state.theme = "dark"
+        st.session_state.theme = "light"
 
-    st.markdown(get_custom_css(st.session_state.theme), unsafe_allow_html=True)
+    st.markdown(get_custom_css("light"), unsafe_allow_html=True)
 
 
 def initialize_connections() -> bool:
@@ -80,17 +80,8 @@ def initialize_connections() -> bool:
 def render_sidebar() -> Tuple[str, str]:
     """Render sidebar controls and return server/model selections."""
     with st.sidebar:
-        col_title, col_theme = st.columns([0.6, 0.4])
-        with col_title:
-            st.markdown("<p class='settings-title'>Control Center</p>", unsafe_allow_html=True)
-        with col_theme:
-            st.radio(
-                "Theme",
-                options=["dark", "light"],
-                label_visibility="collapsed",
-                horizontal=True,
-                key="theme"
-            )
+        st.image("Arab_Bank.svg.png", use_container_width=True)
+        st.markdown("<p class='settings-title'>Control Center</p>", unsafe_allow_html=True)
 
         server_default = st.session_state.get("server_url", DEFAULT_SERVER_URL)
         server_url = st.text_input("MCP Server URL", value=server_default)
@@ -129,7 +120,7 @@ def render_sidebar() -> Tuple[str, str]:
 
 def render_main_title() -> None:
     """Display the main page title and supporting subtitle."""
-    st.title("Loans Assistant ChatBot")
+    st.title("Loans Assistant ChatBot 🏦")
     st.caption("Chat with your AI co-pilot and dispatch MCP tools when needed.")
 
 
