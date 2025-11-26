@@ -183,7 +183,7 @@ def load_conversation(conversation_id: str):
         if conv:
             st.session_state.messages = conv.get("messages", [])
             st.session_state.conversation_id = conversation_id
-            st.session_state.previous_response_id = None
+            st.session_state.previous_response_id = conv.get("last_response_id")
             st.session_state.pending_approval = None
 
 

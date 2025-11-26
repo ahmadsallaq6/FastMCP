@@ -79,21 +79,18 @@ def initialize_connections() -> bool:
 
 def render_sidebar() -> Tuple[str, str]:
     """Render sidebar controls and return server/model selections."""
-    theme_index = 0 if st.session_state.get("theme", "dark") == "dark" else 1
-
     with st.sidebar:
-        col_title, col_theme = st.columns([0.7, 0.3])
+        col_title, col_theme = st.columns([0.6, 0.4])
         with col_title:
             st.markdown("<p class='settings-title'>Control Center</p>", unsafe_allow_html=True)
         with col_theme:
-            theme_choice = st.radio(
+            st.radio(
                 "Theme",
                 options=["dark", "light"],
-                index=theme_index,
                 label_visibility="collapsed",
                 horizontal=True,
+                key="theme"
             )
-            st.session_state.theme = theme_choice
 
         server_default = st.session_state.get("server_url", DEFAULT_SERVER_URL)
         server_url = st.text_input("MCP Server URL", value=server_default)
