@@ -28,3 +28,17 @@ class Loan(BaseModel):
     status: str
     remaining_balance: float
     purpose: str
+
+
+class GenericEmailRequest(BaseModel):
+    customer_id: str
+    subject: str
+    body: str
+    loan_id: Optional[str] = None
+
+
+class LoanSMSRequest(BaseModel):
+    customer_id: str
+    loan_id: str
+
+

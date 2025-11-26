@@ -1,16 +1,16 @@
-"""
-UI components for the Streamlit application.
-Handles sidebar, chat display, and approval dialogs.
-"""
+"""UI helpers for the Streamlit frontend."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from typing import Iterable, Tuple, Literal
 
 import streamlit as st
-import json
-import html
-from typing import List, Dict, Callable
 
 from config import (
     PAGE_CONFIG,
-    CUSTOM_CSS,
     DEFAULT_SERVER_URL,
     AZURE_OPENAI_GPT_DEPLOYMENT_NAME,
     get_custom_css,
@@ -21,240 +21,187 @@ from session import (
     clear_conversation,
 )
 
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
-from database import get_mongo_client
+# Ensure backend package is importable for database connectivity checks
+BACKEND_PATH = os.path.join(os.path.dirname(__file__), "..", "backend")
+if BACKEND_PATH not in sys.path:
+    sys.path.insert(0, BACKEND_PATH)
+
+try:
+    from database import get_mongo_client  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - defensive fallback
+    get_mongo_client = None  # type: ignore
 
 
-def setup_page():
-    """Configure the Streamlit page settings and apply custom CSS."""
-    st.set_page_config(**PAGE_CONFIG)
-    
-    # Initialize theme in session state
+def setup_page() -> None:
+    """Apply Streamlit page config and theme-specific CSS."""
+    if not st.session_state.get("_page_configured"):
+        layout_value = PAGE_CONFIG.get("layout", "centered")
+        layout_literal: Literal["centered", "wide"] = "wide" if layout_value == "wide" else "centered"
+
+        sidebar_value = PAGE_CONFIG.get("initial_sidebar_state", "expanded")
+        sidebar_literal: Literal["auto", "collapsed", "expanded"]
+        if sidebar_value == "auto":
+            sidebar_literal = "auto"
+        elif sidebar_value == "collapsed":
+            sidebar_literal = "collapsed"
+        else:
+            sidebar_literal = "expanded"
+
+        st.set_page_config(
+            page_title=PAGE_CONFIG.get("page_title", "Loans Assistant"),
+            page_icon=PAGE_CONFIG.get("page_icon", "💬"),
+            layout=layout_literal,
+            initial_sidebar_state=sidebar_literal,
+        )
+        st.session_state._page_configured = True
+
     if "theme" not in st.session_state:
         st.session_state.theme = "dark"
-    
-    # Apply theme-specific CSS
-    current_css = get_custom_css(st.session_state.theme)
-    st.markdown(current_css, unsafe_allow_html=True)
+
+    st.markdown(get_custom_css(st.session_state.theme), unsafe_allow_html=True)
 
 
-def render_sidebar() -> tuple[str, str]:
-    """Render the sidebar with settings and conversation history.
-    
-    Returns:
-        Tuple of (server_url, model)
-    """
+def initialize_connections() -> bool:
+    """Prime external connections (MongoDB) and memoize the status."""
+    if "mongo_available" in st.session_state:
+        return bool(st.session_state.mongo_available)
+
+    available = False
+    if get_mongo_client is not None:
+        try:
+            available = get_mongo_client() is not None
+        except Exception:
+            available = False
+
+    st.session_state.mongo_available = available
+    return available
+
+
+def render_sidebar() -> Tuple[str, str]:
+    """Render sidebar controls and return server/model selections."""
+    theme_index = 0 if st.session_state.get("theme", "dark") == "dark" else 1
+
     with st.sidebar:
-        # Theme toggle at the top
-        col1, col2 = st.columns([4, 0.8], vertical_alignment="center")
-        with col1:
-            st.markdown(
-                '<div class="settings-title">⚙️ Settings</div>',
-                unsafe_allow_html=True,
+        col_title, col_theme = st.columns([0.7, 0.3])
+        with col_title:
+            st.markdown("<p class='settings-title'>Control Center</p>", unsafe_allow_html=True)
+        with col_theme:
+            theme_choice = st.radio(
+                "Theme",
+                options=["dark", "light"],
+                index=theme_index,
+                label_visibility="collapsed",
+                horizontal=True,
             )
-        with col2:
-            # Theme toggle button
-            theme_icon = "🌙" if st.session_state.theme == "dark" else "☀️"
-            if st.button(theme_icon, key="theme_toggle", help="Toggle light/dark mode", use_container_width=False):
-                st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
-                st.rerun()
-        
-        st.divider()
-        
-        # Local FastAPI Server URL configuration
-        st.text_input(
-            "🔗 Local API Server URL",
-            value=DEFAULT_SERVER_URL,
-            help="Enter your local FastAPI server URL (no ngrok needed!)",
-            key="server_url_input"
-        )
-        server_url = st.session_state.get("server_url_input", DEFAULT_SERVER_URL)
-        
-        # Model selection
-        model = st.selectbox(
-            "🤖 Model",
-            [AZURE_OPENAI_GPT_DEPLOYMENT_NAME],
-            index=0,
-            key="model_select"
-        )
-        
-        st.divider()
-        
-        # Status indicator with styling
-        if st.session_state.theme == "dark":
-            st.markdown("""
-                <div style="background: linear-gradient(135deg, rgba(124, 58, 237, 0.15) 0%, rgba(124, 58, 237, 0.05) 100%); 
-                            padding: 1rem; border-radius: 12px; text-align: center;
-                            border: 1px solid rgba(124, 58, 237, 0.3);">
-                    <span style="font-size: 1.2rem; margin-right: 0.5rem;">🔒</span> 
-                    <span style="color: #a78bfa; font-weight: 600; font-size: 0.95rem;">Local Mode Active</span>
-                    <p style="margin-top: 0.5rem; font-size: 0.8rem; color: #7c3aed; margin-bottom: 0;">
-                        Tools execute locally • No external exposure
-                    </p>
-                </div>
-            """, unsafe_allow_html=True)
+            st.session_state.theme = theme_choice
+
+        server_default = st.session_state.get("server_url", DEFAULT_SERVER_URL)
+        server_url = st.text_input("MCP Server URL", value=server_default)
+        st.session_state.server_url = server_url
+
+        model_default = st.session_state.get("model_name", AZURE_OPENAI_GPT_DEPLOYMENT_NAME)
+        model_name = st.text_input("Azure OpenAI deployment", value=model_default)
+        st.session_state.model_name = model_name
+
+        mongo_available = st.session_state.get("mongo_available", False)
+        if mongo_available:
+            st.success("MongoDB connected", icon="✅")
         else:
-            st.markdown("""
-                <div style="background: linear-gradient(135deg, rgba(124, 58, 237, 0.1) 0%, rgba(124, 58, 237, 0.05) 100%); 
-                            padding: 1rem; border-radius: 12px; text-align: center;
-                            border: 1px solid rgba(124, 58, 237, 0.2);">
-                    <span style="font-size: 1.2rem; margin-right: 0.5rem;">🔒</span> 
-                    <span style="color: #7c3aed; font-weight: 600; font-size: 0.95rem;">Local Mode Active</span>
-                    <p style="margin-top: 0.5rem; font-size: 0.8rem; color: #8b5cf6; margin-bottom: 0;">
-                        Tools execute locally • No external exposure
-                    </p>
-                </div>
-            """, unsafe_allow_html=True)
-        
-        st.divider()
-        
-        # New Chat button
-        if st.button("➕ New Chat", use_container_width=True, type="primary"):
+            st.info("MongoDB not available", icon="ℹ️")
+
+        st.markdown("---")
+        if st.button("+ New chat", use_container_width=True, type="primary"):
             clear_conversation()
             st.rerun()
-            
-        st.markdown("#### 📜 Conversation History")
-        
-        # Fetch and display conversations
-        conversations = get_conversation_history()
+
+        st.markdown("### History")
+        conversations = _safe_get_conversations() if mongo_available else []
         if conversations:
             for conv in conversations:
-                title = conv.get("title", "Untitled")
-                # Truncate long titles
-                display_title = title[:28] + "..." if len(title) > 28 else title
-                if st.button(
-                    f"💬 {display_title}", 
-                    key=conv["conversation_id"], 
-                    use_container_width=True
-                ):
-                    load_conversation(conv["conversation_id"])
+                title = conv.get("title") or conv.get("conversation_id")
+                if st.button(title, key=f"hist_{conv['conversation_id']}", use_container_width=True):
+                    load_conversation(conv['conversation_id'])
                     st.rerun()
         else:
-            st.markdown("""
-                <div style="text-align: center; opacity: 0.6; padding: 1rem; font-size: 0.9rem;">
-                    No conversation history yet
-                </div>
-            """, unsafe_allow_html=True)
-        
-        st.divider()
-        
-        # Footer
-        st.markdown("""
-            <div style="text-align: center; opacity: 0.6; font-size: 0.8rem; line-height: 1.5;">
-                <p style="margin: 0; font-weight: 600;">💬 Loans Assistant</p>
-                <p style="margin: 0; font-size: 0.75rem;">Powered by Azure OpenAI & Local MCP</p>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    return server_url, model
+            st.caption("No stored conversations yet.")
+
+    safe_server = (server_url or "").strip() or DEFAULT_SERVER_URL
+    safe_model = (model_name or "").strip() or AZURE_OPENAI_GPT_DEPLOYMENT_NAME
+    return safe_server, safe_model
 
 
-def render_chat_messages(messages: List[Dict]):
-    """Render all chat messages in the conversation.
-    
-    Args:
-        messages: List of message dictionaries with role, content, and tool_calls
-    """
+def render_main_title() -> None:
+    """Display the main page title and supporting subtitle."""
+    st.title("Loans Assistant ChatBot")
+    st.caption("Chat with your AI co-pilot and dispatch MCP tools when needed.")
+
+
+def render_chat_messages(messages: Iterable[dict]) -> None:
+    """Replay past chat messages using Streamlit's chat components."""
     for message in messages:
-        role = message["role"]
-        content = message["content"]
-        tool_calls = message.get("tool_calls", [])
-        
-        with st.chat_message(role, avatar="👤" if role == "user" else "🤖"):
-            # Display tool calls if any
+        role = message.get("role", "assistant")
+        avatar = "👤" if role == "user" else "🤖"
+        content = message.get("content", "")
+        tool_calls = message.get("tool_calls") or []
+
+        with st.chat_message(role, avatar=avatar):
+            if content:
+                st.markdown(content)
             if tool_calls:
-                for tool_call in tool_calls:
-                    with st.status(
-                        f"🛠️ Used tool: {tool_call.get('name', 'Unknown')}", 
-                        state="complete"
-                    ):
-                        st.write("Input:")
-                        st.code(str(tool_call.get('arguments', '')))
-                        st.write("Output:")
-                        st.code(str(tool_call.get('result', '')))
-
-            # Escape dollar signs for display
-            display_content = content.replace("$", "\\$")
-            st.markdown(display_content)
+                with st.expander("Tool calls", expanded=False):
+                    for idx, call in enumerate(tool_calls, start=1):
+                        st.markdown(f"**#{idx} {call.get('name', 'tool')}**")
+                        if call.get("arguments"):
+                            st.code(call["arguments"], language="json")
+                        if call.get("result"):
+                            st.code(call["result"], language="json")
 
 
-def render_approval_dialog(on_approve: Callable, on_reject: Callable):
-    """Render the approval dialog for sensitive tool calls.
-    
-    Args:
-        on_approve: Callback function when user approves
-        on_reject: Callback function when user rejects
-    """
-    if st.session_state.pending_approval is None:
+def render_approval_dialog(*, on_approve, on_reject) -> None:
+    """Show a confirmation UI for pending tool calls."""
+    approval = st.session_state.get("pending_approval")
+    if not approval:
         return
-    
-    tool_name = st.session_state.pending_approval.get("tool_name", "a tool")
-    arguments = st.session_state.pending_approval.get("arguments", {})
-    
-    # Styled approval card
-    st.markdown(
-        """
-        <div class="approval-banner">
-            <div class="approval-banner__icon">🔐</div>
-            <div>
-                <div class="approval-banner__title">Action required</div>
-                <div class="approval-banner__subtitle">Review the loan application details below</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    
-    st.markdown(f"**Tool:** `{tool_name}`")
-    st.markdown("**Details:**")
-    formatted_json = html.escape(json.dumps(arguments, indent=2))
-    st.markdown(
-        f"""
-        <div class="approval-json">
-            <pre>{formatted_json}</pre>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    
-    col1, col2 = st.columns(2, gap="small")
-    with col1:
-        if st.button("✅ Approve Request", type="primary", use_container_width=True):
-            on_approve()
-    with col2:
-        if st.button("❌ Reject Request", use_container_width=True):
-            on_reject()
 
-
-def render_chat_input(disabled: bool = False) -> str:
-    """Render the chat input box.
-    
-    Args:
-        disabled: Whether the input should be disabled
-        
-    Returns:
-        User input string or None
-    """
-    placeholder = "Send a message..."
-    if disabled:
-        placeholder = "Please approve or reject the loan request above."
-    
-    return st.chat_input(placeholder, disabled=disabled)
-
-
-def render_main_title():
-    """Render the main page title."""
     st.markdown("""
-        <div class="hero-header">
-            <div class="hero-chip">🛡️ Local MCP Ready</div>
-            <h1>💬 Loans Assistant</h1>
-            <p>Your AI-powered loan consultation partner</p>
+        <div class="approval-banner">
+            <div class="approval-banner__icon">⚠️</div>
+            <div>
+                <div class="approval-banner__title">Tool approval required</div>
+                <div class="approval-banner__subtitle">Review the arguments below before continuing.</div>
+            </div>
         </div>
     """, unsafe_allow_html=True)
 
+    st.markdown("<div class='approval-json__label'>Tool Name</div>", unsafe_allow_html=True)
+    st.info(approval.get("tool_name", "unknown"))
 
-def initialize_connections():
-    """Initialize database connections."""
-    get_mongo_client()
+    st.markdown("<div class='approval-json__label'>Arguments</div>", unsafe_allow_html=True)
+    
+    args = approval.get("arguments") or {}
+    if args:
+        for key, value in args.items():
+            # Use text_area for long text, text_input for short
+            val_str = str(value)
+            if len(val_str) > 60 or "\n" in val_str:
+                st.text_area(key, value=val_str, disabled=True, height=150)
+            else:
+                st.text_input(key, value=val_str, disabled=True)
+    else:
+        st.caption("No arguments provided.")
+
+    col_left, col_right = st.columns(2)
+    col_left.button("Approve", use_container_width=True, on_click=on_approve, type="primary")
+    col_right.button("Reject", use_container_width=True, on_click=on_reject)
+
+
+def render_chat_input(*, disabled: bool = False) -> str:
+    """Render chat input element and return submitted text."""
+    return st.chat_input("Ask Teller anything", disabled=disabled) or ""
+
+
+def _safe_get_conversations():
+    try:
+        return get_conversation_history()
+    except Exception:
+        return []

@@ -37,7 +37,13 @@ def init_session_state():
     if "pending_approval" not in st.session_state:
         st.session_state.pending_approval = None
 
+    if "processing_approval" not in st.session_state:
+        st.session_state.processing_approval = None
+
     if "client" not in st.session_state:
+        if not AZURE_OPENAI_KEY or not AZURE_OPENAI_ENDPOINT:
+            st.error("Azure OpenAI configuration missing. Set AZURE_OPENAI_KEY and AZURE_OPENAI_ENDPOINT in the environment.")
+            st.stop()
         try:
             st.session_state.client = AzureOpenAI(
                 api_key=AZURE_OPENAI_KEY,

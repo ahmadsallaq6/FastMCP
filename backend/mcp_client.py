@@ -5,7 +5,7 @@ Uses FastMCP Client for SSE transport communication.
 
 import json
 import asyncio
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from fastmcp import Client
 
 
@@ -78,7 +78,7 @@ class MCPClient:
             openai_tools.append(tool_def)
         return openai_tools
     
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Union[Dict[str, Any], List[Any]]:
         """Execute a tool on the MCP server via FastMCP Client.
         
         Args:

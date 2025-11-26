@@ -5,13 +5,59 @@ Provides REST endpoints for customer, account, and loan operations.
 
 from fastapi import FastAPI, HTTPException
 import uuid
-from typing import List
+from typing import List, Optional
 import os
 import httpx
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from twilio.rest import Client
 from dotenv import load_dotenv
 
-from models import Customer, Account, LoanRequest, Loan
+from models import Customer, Account, LoanRequest, Loan, GenericEmailRequest, LoanSMSRequest
 from database import get_db
+
+
+def send_sms(to_number: str, message: str):
+    """Send an SMS using Twilio credentials from the environment."""
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    from_number = os.getenv("TWILIO_PHONE_NUMBER")
+
+    if not account_sid or not auth_token or not from_number:
+        raise HTTPException(500, "Twilio configuration missing in environment variables.")
+
+    try:
+        client = Client(account_sid, auth_token)
+        client.messages.create(body=message, from_=from_number, to=to_number)
+    except Exception as exc:  # pragma: no cover - third party failure
+        raise HTTPException(500, f"SMS send failed: {str(exc)}") from exc
+
+
+def send_email(to_email: str, subject: str, body: str):
+    """Send an email using SMTP settings from the environment."""
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT", "0"))
+    smtp_username = os.getenv("SMTP_USERNAME")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    sender_email = os.getenv("SENDER_EMAIL")
+
+    if not (smtp_host and smtp_port and smtp_username and smtp_password and sender_email):
+        raise HTTPException(500, "SMTP configuration missing in environment variables.")
+
+    msg = MIMEMultipart()
+    msg["From"] = sender_email
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_username, smtp_password)
+            server.sendmail(sender_email, to_email, msg.as_string())
+    except Exception as exc:  # pragma: no cover - smtp failure
+        raise HTTPException(500, f"Email send failed: {str(exc)}") from exc
 
 load_dotenv()
 
@@ -287,3 +333,162 @@ async def linkup_web_search(query: str):
         raise HTTPException(response.status_code, response.text)
 
     return response.json()
+
+
+@app.post(
+    "/communications/send-email",
+    description=(
+        "Sends a custom email to a customer with optional loan context. "
+        "LLM callers must supply the full subject and body content."
+    ),
+)
+async def send_custom_email(request: GenericEmailRequest):
+    """Send an arbitrary email to the specified customer."""
+    customer = await db.customers.find_one({"customer_id": request.customer_id})
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    loan = None
+    if request.loan_id:
+        loan = await db.loans.find_one({"loan_id": request.loan_id})
+        if not loan:
+            raise HTTPException(404, "Loan not found")
+
+    send_email(to_email=customer["email"], subject=request.subject, body=request.body)
+
+    response = {
+        "email_sent_to": customer["email"],
+        "customer_id": request.customer_id,
+        "subject_preview": request.subject,
+        "loan_id": request.loan_id,
+    }
+
+    if loan:
+        response["loan_status"] = loan.get("status")
+
+    return response
+
+
+@app.get("/analytics/loan-summary", description="Summary of all loans in the system")
+async def analytics_loan_summary():
+    cursor = db.loans.find({})
+    loans = await cursor.to_list(None)
+
+    if not loans:
+        return {"message": "No loans found"}
+
+    total_loans = len(loans)
+    approved = sum(1 for loan in loans if loan["status"] == "approved")
+    denied = sum(1 for loan in loans if loan["status"] == "denied")
+    review = sum(1 for loan in loans if loan["status"] == "manual_review")
+
+    total_disbursed_amount = sum(loan["amount"] for loan in loans if loan["status"] == "approved")
+    avg_amount = round(sum(loan["amount"] for loan in loans) / total_loans, 2)
+
+    return {
+        "total_loans": total_loans,
+        "approved": approved,
+        "denied": denied,
+        "manual_review": review,
+        "total_disbursed_amount": total_disbursed_amount,
+        "average_loan_amount": avg_amount,
+    }
+
+
+@app.post("/loans/send-status-sms", description="Send SMS to customer with latest loan status")
+async def send_loan_status_sms(request: LoanSMSRequest):
+    customer = await db.customers.find_one({"customer_id": request.customer_id})
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    loan = await db.loans.find_one({"loan_id": request.loan_id})
+    if not loan:
+        raise HTTPException(404, "Loan not found")
+
+    phone = customer.get("phone") or customer.get("mobile") or customer.get("phone_number")
+    if not phone:
+        raise HTTPException(400, "Customer does not have a phone number registered")
+
+    sms_message = (
+        f"Teller Bank Update:\n"
+        f"Loan ID: {loan['loan_id']}\n"
+        f"Status: {loan['status'].upper()}\n"
+        f"Amount: ${loan['amount']}"
+    )
+
+    send_sms(phone, sms_message)
+
+    return {"success": True, "sms_sent_to": phone, "loan_status": loan["status"]}
+
+
+@app.post("/loans/send-approval-sms", description="Send SMS when a loan is approved")
+async def send_loan_approval_sms(request: LoanSMSRequest):
+    customer = await db.customers.find_one({"customer_id": request.customer_id})
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    loan = await db.loans.find_one({"loan_id": request.loan_id})
+    if not loan:
+        raise HTTPException(404, "Loan not found")
+
+    if loan["status"] != "approved":
+        raise HTTPException(400, f"Loan status is {loan['status']}, not approved")
+
+    phone = customer.get("phone") or customer.get("mobile") or customer.get("phone_number")
+    if not phone:
+        raise HTTPException(400, "Customer does not have a phone number registered")
+
+    sms_message = (
+        f"Great news! Your loan application has been APPROVED!\n\n"
+        f"Loan ID: {loan['loan_id']}\n"
+        f"Amount: ${loan['amount']}\n"
+        f"Status: APPROVED\n\n"
+        f"Please log in to your account to review terms and next steps.\n"
+        f"Thank you for choosing Teller Bank!"
+    )
+
+    send_sms(phone, sms_message)
+
+    return {
+        "success": True,
+        "message": f"Approval SMS sent successfully to {phone}",
+        "sms_sent_to": phone,
+        "loan_id": loan["loan_id"],
+    }
+
+
+@app.post("/loans/send-rejection-sms", description="Send SMS when a loan is rejected")
+async def send_loan_rejection_sms(request: LoanSMSRequest):
+    customer = await db.customers.find_one({"customer_id": request.customer_id})
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    loan = await db.loans.find_one({"loan_id": request.loan_id})
+    if not loan:
+        raise HTTPException(404, "Loan not found")
+
+    if loan["status"] != "denied":
+        raise HTTPException(400, f"Loan status is {loan['status']}, not denied")
+
+    phone = customer.get("phone") or customer.get("mobile") or customer.get("phone_number")
+    if not phone:
+        raise HTTPException(400, "Customer does not have a phone number registered")
+
+    sms_message = (
+        f"Loan Application Update\n\n"
+        f"Loan ID: {loan['loan_id']}\n"
+        f"Status: DENIED\n"
+        f"Amount Requested: ${loan['amount']}\n\n"
+        f"Unfortunately, your loan application was not approved at this time.\n"
+        f"Please contact our support team for more information.\n"
+        f"Thank you for applying to Teller Bank."
+    )
+
+    send_sms(phone, sms_message)
+
+    return {
+        "success": True,
+        "message": f"Rejection SMS sent successfully to {phone}",
+        "sms_sent_to": phone,
+        "loan_id": loan["loan_id"],
+    }
