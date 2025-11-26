@@ -550,7 +550,7 @@ def get_custom_css(theme: str = "dark") -> str:
     /* ===== Buttons ===== */
     .stButton > button {{
         background: {colors['primary_button_bg']};
-        color: {colors['primary_button_text']};
+        color: {colors['primary_button_text']} !important;
         border: none;
         border-radius: 10px;
         padding: 0.65rem 1.5rem;
@@ -564,7 +564,7 @@ def get_custom_css(theme: str = "dark") -> str:
     .stButton > button:hover {{
         transform: translateY(-3px);
         background: {colors['primary_button_hover_bg']};
-        color: {colors['primary_button_hover_text']};
+        color: {colors['primary_button_hover_text']} !important;
         box-shadow: {colors['primary_button_hover_shadow']};
     }}
     
@@ -613,6 +613,34 @@ def get_custom_css(theme: str = "dark") -> str:
     .stTextInput > div > div > input:focus {{
         border-color: {colors['accent']} !important;
         box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15) !important;
+    }}
+
+    .stTextInput > div > div > input:disabled {{
+        color: {colors['text_primary']} !important;
+        background-color: {colors['input_bg']} !important;
+        opacity: 0.6 !important;
+        -webkit-text-fill-color: {colors['text_primary']} !important;
+    }}
+
+    /* ===== Text Area ===== */
+    .stTextArea > div > div > textarea {{
+        background-color: {colors['input_bg']} !important;
+        border: 2px solid {colors['border']} !important;
+        border-radius: 10px !important;
+        color: {colors['text_primary']} !important;
+        font-size: 0.95rem;
+    }}
+
+    .stTextArea > div > div > textarea:focus {{
+        border-color: {colors['accent']} !important;
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15) !important;
+    }}
+
+    .stTextArea > div > div > textarea:disabled {{
+        color: {colors['text_primary']} !important;
+        background-color: {colors['input_bg']} !important;
+        opacity: 0.6 !important;
+        -webkit-text-fill-color: {colors['text_primary']} !important;
     }}
     
     /* ===== Select Box ===== */
