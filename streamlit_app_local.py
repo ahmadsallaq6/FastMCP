@@ -662,15 +662,13 @@ def process_chat(user_input):
     with st.chat_message("assistant", avatar="🤖"):
         with st.spinner("Thinking..."):
             try:
-                # Inject instructions if first message
-                api_input = user_input
-                if len(st.session_state.messages) == 1:
-                    api_input = (
-                        "System Instructions: You are a helpful loan assistant. "
-                        "You have access to various tools to help customers. "
-                        "When the user asks a question requesting information or knowledge, use the appropriate search tool to find relevant information and provide accurate answers. "
-                        "\n\nUser: " + user_input
-                    )
+                # Include system instructions with every message
+                api_input = (
+                    "System Instructions: You are a helpful loan assistant. "
+                    "You have access to various tools to help customers. "
+                    "When the user asks a question requesting information or knowledge, use the appropriate search tool to find relevant information and provide accurate answers. "
+                    "\n\nUser: " + user_input
+                )
 
                 # Call OpenAI API with dynamically fetched tools
                 stream = st.session_state.client.responses.create(
