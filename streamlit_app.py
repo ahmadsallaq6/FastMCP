@@ -9,6 +9,8 @@ import pymongo
 # Load environment variables
 load_dotenv()
 
+AZURE_GPT_DEPLOYMENT = os.getenv("AZURE_OPENAI_GPT_DEPLOYMENT_NAME", "gpt-4.1")
+
 @st.cache_resource(show_spinner=False)
 def get_mongo_client():
     mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
@@ -34,6 +36,76 @@ def get_conversations_collection():
         return db["conversations"]
     return None
 
+def _extract_response_text(response) -> str:
+    """Pull plain text segments out of a Responses API output."""
+    output_text = getattr(response, "output_text", None)
+    if output_text:
+        if isinstance(output_text, (list, tuple)):
+            joined = " ".join(str(part) for part in output_text if part)
+        else:
+            joined = str(output_text)
+        if joined.strip():
+            return joined.strip()
+
+    text_fragments = []
+    for output in getattr(response, "output", []) or []:
+        if getattr(output, "type", None) != "message":
+            continue
+        for content_item in getattr(output, "content", []) or []:
+            if getattr(content_item, "type", None) == "text":
+                text_fragments.append(getattr(content_item, "text", ""))
+
+    if not text_fragments and hasattr(response, "choices"):
+        for choice in getattr(response, "choices", []) or []:
+            message = getattr(choice, "message", None)
+            if not message:
+                continue
+            if isinstance(message, dict):
+                text_fragments.append(message.get("content", ""))
+            else:
+                text_fragments.append(getattr(message, "content", ""))
+
+    return "".join(text_fragments).strip()
+
+
+def generate_conversation_title(seed_content: str) -> str:
+    """Use Azure OpenAI to craft a short descriptive title."""
+    base = (seed_content or "New Conversation").strip()
+    default_title = (base[:30] + "...") if len(base) > 30 else (base or "New Conversation")
+
+    client = st.session_state.get("client")
+    if client is None:
+        return default_title
+
+    prompt = (
+        "You name banking chat conversations. "
+        "Respond with a title under 6 words, Title Case, no surrounding quotes."
+    )
+
+    try:
+        response = client.responses.create(
+            model=AZURE_GPT_DEPLOYMENT,
+            input=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": f"Conversation context:\n{seed_content}"},
+            ],
+        )
+        llm_title = _extract_response_text(response)
+        if not llm_title:
+            return default_title
+
+        cleaned = " ".join(llm_title.replace("\n", " ").split())
+        cleaned = cleaned.strip('"\'')
+        if not cleaned:
+            return default_title
+        if len(cleaned) > 60:
+            cleaned = cleaned[:57].rstrip() + "..."
+        return cleaned
+    except Exception as exc:
+        print(f"Conversation title generation failed: {exc}")
+        return default_title
+
+
 def save_message(role, content, tool_calls=None):
     collection = get_conversations_collection()
     if collection is None:
@@ -42,7 +114,7 @@ def save_message(role, content, tool_calls=None):
     if "conversation_id" not in st.session_state or not st.session_state.conversation_id:
         st.session_state.conversation_id = str(uuid.uuid4())
         # Create new conversation document
-        title = content[:30] + "..." if len(content) > 30 else content
+        title = generate_conversation_title(content)
         collection.insert_one({
             "conversation_id": st.session_state.conversation_id,
             "title": title,
@@ -218,7 +290,7 @@ with st.sidebar:
     # Model selection - uses Azure OpenAI deployment name
     model = st.selectbox(
         "Model",
-        [os.getenv("AZURE_OPENAI_GPT_DEPLOYMENT_NAME", "gpt-4.1")],
+        [AZURE_GPT_DEPLOYMENT],
         index=0
     )
     
@@ -458,6 +530,7 @@ def process_chat(user_input):
                             "System Instructions: You are a helpful loan assistant. "
                             "You have access to tools including 'apply_for_loan' and 'search'. "
                             "When the user asks a question requesting information or knowledge, use the 'search' tool to find relevant information and provide accurate answers. "
+                            "Loan approvals and rejections are ultimately decided by the human user: if the user explicitly approves a loan request you must treat it as approved and may not overturn it, and if the user rejects a request you must treat it as rejected with no reversals. "
                             "\n\nUser: " + user_input
                         )
 

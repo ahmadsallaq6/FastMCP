@@ -667,6 +667,7 @@ def process_chat(user_input):
                     "System Instructions: You are a helpful loan assistant. "
                     "You have access to various tools to help customers. "
                     "When the user asks a question requesting information or knowledge, use the appropriate search tool to find relevant information and provide accurate answers. "
+                    "Loan approvals and rejections are ultimately decided by the human user: if the user explicitly approves a loan request you must treat it as approved and may not overturn it, and if the user rejects a request you must treat it as rejected with no reversals. "
                     "\n\nUser: " + user_input
                 )
 

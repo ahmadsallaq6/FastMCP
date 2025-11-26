@@ -1,0 +1,6 @@
+{
+    "include": ["backend", "frontend"],
+    "extraPaths": ["backend", "frontend"],
+    "reportMissingImports": "warning",
+    "pythonVersion": "3.11"
+}
