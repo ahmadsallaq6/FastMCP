@@ -144,6 +144,9 @@ def render_main_title() -> None:
 
 def render_chat_messages(messages: Iterable[dict]) -> None:
     """Replay past chat messages using Streamlit's chat components."""
+    import base64
+    import json
+    
     for message in messages:
         role = message.get("role", "assistant")
         avatar = "👤" if role == "user" else "🤖"
@@ -153,6 +156,31 @@ def render_chat_messages(messages: Iterable[dict]) -> None:
         with st.chat_message(role, avatar=avatar):
             if content:
                 st.markdown(content)
+            
+            # Check tool calls for PDF results and display download buttons
+            for idx, call in enumerate(tool_calls):
+                result_str = call.get("result", "")
+                if result_str:
+                    try:
+                        result = json.loads(result_str) if isinstance(result_str, str) else result_str
+                        if isinstance(result, dict) and "pdf_base64" in result:
+                            # Display PDF download button
+                            try:
+                                pdf_bytes = base64.b64decode(result['pdf_base64'])
+                                filename = result.get('filename', 'contract.pdf')
+                                st.download_button(
+                                    label=f"📥 Download: {filename}",
+                                    data=pdf_bytes,
+                                    file_name=filename,
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                    key=f"pdf_history_{result.get('loan_id', 'unknown')}_{idx}"
+                                )
+                            except Exception:
+                                pass
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            
             if tool_calls:
                 with st.expander("Tool calls", expanded=False):
                     for idx, call in enumerate(tool_calls, start=1):
@@ -160,7 +188,18 @@ def render_chat_messages(messages: Iterable[dict]) -> None:
                         if call.get("arguments"):
                             st.code(call["arguments"], language="json")
                         if call.get("result"):
-                            st.code(call["result"], language="json")
+                            # Hide base64 data from display
+                            result_str = call["result"]
+                            try:
+                                result = json.loads(result_str) if isinstance(result_str, str) else result_str
+                                if isinstance(result, dict) and "pdf_base64" in result:
+                                    display_result = {k: v for k, v in result.items() if k != 'pdf_base64'}
+                                    display_result['pdf_base64'] = '[PDF data - use download button above]'
+                                    st.code(json.dumps(display_result, indent=2), language="json")
+                                else:
+                                    st.code(result_str, language="json")
+                            except (json.JSONDecodeError, TypeError):
+                                st.code(result_str, language="json")
 
 
 def render_approval_dialog(*, on_approve, on_reject) -> None:

@@ -317,6 +317,29 @@ def process_chat(user_input: str, server_url: str, model: str):
                 display_message = assistant_message.replace("$", "\\$")
                 text_placeholder.markdown(display_message)
                 
+                # Display PDF download buttons for any generated contracts
+                for tc in tool_calls:
+                    result_str = tc.get("result", "")
+                    if result_str:
+                        try:
+                            result = json.loads(result_str) if isinstance(result_str, str) else result_str
+                            if isinstance(result, dict) and "pdf_base64" in result:
+                                try:
+                                    pdf_bytes = base64.b64decode(result['pdf_base64'])
+                                    filename = result.get('filename', 'contract.pdf')
+                                    st.download_button(
+                                        label=f"📥 Download: {filename}",
+                                        data=pdf_bytes,
+                                        file_name=filename,
+                                        mime="application/pdf",
+                                        use_container_width=True,
+                                        key=f"pdf_final_{result.get('loan_id', 'unknown')}"
+                                    )
+                                except Exception:
+                                    pass
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                
                 # Add assistant message to chat history
                 st.session_state.messages.append({
                     "role": "assistant", 

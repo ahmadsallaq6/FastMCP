@@ -718,6 +718,15 @@ async def send_custom_email(request: GenericEmailRequest):
         loan = await db.loans.find_one({"loan_id": request.loan_id})
         if not loan:
             raise HTTPException(404, "Loan not found")
+        
+        # Verify that the customer_id in the request matches the customer_id in the loan
+        if loan.get("customer_id") != request.customer_id:
+            raise HTTPException(
+                400,
+                f"Customer ID mismatch: The requested customer ({request.customer_id}) "
+                f"does not match the customer associated with loan {request.loan_id} ({loan.get('customer_id')}). "
+                "Cannot send email to a different customer than the loan owner."
+            )
 
     send_email(to_email=customer["email"], subject=request.subject, body=request.body)
 
@@ -771,7 +780,9 @@ async def send_loan_approval_sms(request: LoanEmailRequest):
     if not loan:
         raise HTTPException(404, "Loan not found")
 
-    if loan["status"] != "approved":
+    # Check if loan is approved - accept multiple valid approved statuses
+    approved_statuses = ["approved", "active", "Active"]
+    if loan["status"] not in approved_statuses:
         raise HTTPException(400, "Loan is not approved. Cannot send approval SMS.")
 
     # Build short SMS (same intent as email, compact)
