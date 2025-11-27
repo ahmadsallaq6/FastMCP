@@ -82,6 +82,22 @@ def render_sidebar() -> Tuple[str, str]:
     with st.sidebar:
         st.image("Arab_Bank.svg.png", use_container_width=True)
         st.markdown("<p class='settings-title'>Control Center</p>", unsafe_allow_html=True)
+        
+        # Navigation buttons
+        st.markdown("### Navigation")
+        nav_col1, nav_col2 = st.columns(2)
+        with nav_col1:
+            if st.button("💬 Chat", use_container_width=True, 
+                        type="primary" if st.session_state.get("current_page", "chat") == "chat" else "secondary"):
+                st.session_state.current_page = "chat"
+                st.rerun()
+        with nav_col2:
+            if st.button("📊 Dashboard", use_container_width=True,
+                        type="primary" if st.session_state.get("current_page") == "dashboard" else "secondary"):
+                st.session_state.current_page = "dashboard"
+                st.rerun()
+        
+        st.markdown("---")
 
         server_default = st.session_state.get("server_url", DEFAULT_SERVER_URL)
         server_url = st.text_input("MCP Server URL", value=server_default)
@@ -100,6 +116,7 @@ def render_sidebar() -> Tuple[str, str]:
         st.markdown("---")
         if st.button("+ New chat", use_container_width=True, type="primary"):
             clear_conversation()
+            st.session_state.current_page = "chat"
             st.rerun()
 
         st.markdown("### History")
@@ -109,6 +126,7 @@ def render_sidebar() -> Tuple[str, str]:
                 title = conv.get("title") or conv.get("conversation_id")
                 if st.button(title, key=f"hist_{conv['conversation_id']}", use_container_width=True):
                     load_conversation(conv['conversation_id'])
+                    st.session_state.current_page = "chat"
                     st.rerun()
         else:
             st.caption("No stored conversations yet.")

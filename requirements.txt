@@ -7,3 +7,4 @@ linkup
 motor
 httpx>=0.24.0
 mcp
+plotly>=5.18.0

@@ -406,19 +406,44 @@ def process_pending_approval(server_url: str, model: str):
                 
             else:
                 # User rejected
-                rejection_result = json.dumps({"error": "User rejected the tool call", "status": "rejected"})
+                # For loan applications, still call the backend with force_reject=True to record the denial
+                if tool_name == "apply_for_loan_loans_apply_post":
+                    reject_arguments = dict(arguments)
+                    reject_arguments["force_reject"] = True
+                    
+                    ph = tools_container.empty()
+                    with ph.status(f"🛠️ Recording rejected loan...", state="running"):
+                        st.write("Input:")
+                        st.code(json.dumps(reject_arguments, indent=2))
+                    
+                    result = execute_tool_locally(tool_name, reject_arguments, mcp_client)
+                    result_str = json.dumps(result, indent=2) if isinstance(result, dict) else str(result)
+                    
+                    with ph.status(f"🛠️ Loan rejected and recorded", state="complete"):
+                        st.write("Input:")
+                        st.code(json.dumps(reject_arguments, indent=2))
+                        st.write("Output:")
+                        st.code(result_str)
+                    
+                    rejection_result = result_str
+                    base_tools.append({
+                        "name": tool_name,
+                        "arguments": json.dumps(reject_arguments),
+                        "result": rejection_result,
+                    })
+                else:
+                    rejection_result = json.dumps({"error": "User rejected the tool call", "status": "rejected"})
+                    base_tools.append({
+                        "name": tool_name,
+                        "arguments": json.dumps(arguments),
+                        "result": rejection_result,
+                    })
                 
                 function_output = {
                     "type": "function_call_output",
                     "call_id": call_id,
                     "output": rejection_result,
                 }
-                
-                base_tools.append({
-                    "name": tool_name,
-                    "arguments": json.dumps(arguments),
-                    "result": rejection_result,
-                })
                 
                 stream = st.session_state.client.responses.create(
                     model=model,

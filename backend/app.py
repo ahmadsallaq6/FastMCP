@@ -87,7 +87,171 @@ async def send_sms_infobip(to_number: str, message: str):
     return {"status": "sent", "http_status": response.status_code, "response": response.json()}
 
 
+# ================
+#   EMPLOYMENT SCORE CALCULATION
+# ================
+def calculate_employment_score(customer: dict) -> float:
+    """Calculate employment stability score based on job type and tenure.
+    
+    Args:
+        customer: Customer document with employment fields
+        
+    Returns:
+        Employment score between 0.0 and 1.0
+    """
+    emp_type = customer.get("employment_type")
+    years = customer.get("years_with_employer")
+    business_years = customer.get("business_years")
 
+    if emp_type == "permanent":
+        if years is not None and years >= 2:
+            return 1.0
+        return 0.7
+
+    if emp_type == "contract":
+        return 0.5
+
+    if emp_type in ["part_time", "part-time"]:
+        return 0.3
+
+    if emp_type == "self_employed":
+        if business_years is not None and business_years >= 3:
+            return 0.6
+        return 0.4
+
+    return 0.0
+
+
+# ============================
+# LOAN ELIGIBILITY RULES (CANNOT BE OVERRIDDEN BY TELLER)
+# ============================
+LOAN_ELIGIBILITY_RULES = {
+    "min_credit_score": 500,              # Minimum credit score required
+    "max_active_loans": 5,                 # Maximum number of active loans allowed
+    "max_dti": 0.50,                       # Maximum debt-to-income ratio (50%)
+    "min_annual_income": 12000,            # Minimum annual income required ($12,000)
+    "max_loan_to_income_ratio": 0.5,       # Max loan amount as % of annual income (50%)
+    "min_employment_score": 0.3,           # Minimum employment stability score
+    "blocked_risk_flags": ["bankruptcy", "fraud", "collections"],  # Automatic rejection flags
+}
+
+
+async def check_loan_eligibility(customer: dict, loan_amount: float, db) -> dict:
+    """
+    Check if a customer meets the hard eligibility rules for a loan.
+    These rules CANNOT be overridden by teller force_approve.
+    
+    Returns:
+        dict with 'eligible' (bool), 'violations' (list of rule violations),
+        and 'details' (dict with calculated values)
+    """
+    violations = []
+    details = {}
+    
+    # Rule 1: Minimum Credit Score
+    credit_score = customer.get("credit_score", 0)
+    details["credit_score"] = credit_score
+    if credit_score < LOAN_ELIGIBILITY_RULES["min_credit_score"]:
+        violations.append({
+            "rule": "min_credit_score",
+            "message": f"Credit score ({credit_score}) is below minimum required ({LOAN_ELIGIBILITY_RULES['min_credit_score']})",
+            "current_value": credit_score,
+            "required_value": LOAN_ELIGIBILITY_RULES["min_credit_score"]
+        })
+    
+    # Rule 2: Maximum Active Loans
+    cursor = db.loans.find({
+        "customer_id": customer["customer_id"],
+        "status": {"$in": ["approved", "Active", "active"]}
+    })
+    active_loans = await cursor.to_list(length=None)
+    active_loan_count = len(active_loans)
+    details["active_loan_count"] = active_loan_count
+    
+    if active_loan_count >= LOAN_ELIGIBILITY_RULES["max_active_loans"]:
+        violations.append({
+            "rule": "max_active_loans",
+            "message": f"Customer has {active_loan_count} active loans (maximum allowed: {LOAN_ELIGIBILITY_RULES['max_active_loans']})",
+            "current_value": active_loan_count,
+            "required_value": LOAN_ELIGIBILITY_RULES["max_active_loans"]
+        })
+    
+    # Rule 3: Minimum Annual Income
+    annual_income = customer.get("annual_income", 0)
+    details["annual_income"] = annual_income
+    if annual_income < LOAN_ELIGIBILITY_RULES["min_annual_income"]:
+        violations.append({
+            "rule": "min_annual_income",
+            "message": f"Annual income (${annual_income:,.2f}) is below minimum required (${LOAN_ELIGIBILITY_RULES['min_annual_income']:,.2f})",
+            "current_value": annual_income,
+            "required_value": LOAN_ELIGIBILITY_RULES["min_annual_income"]
+        })
+    
+    # Rule 4: Debt-to-Income Ratio (DTI)
+    monthly_income = annual_income / 12 if annual_income > 0 else 0
+    existing_monthly_debt = sum(l.get("remaining_balance", 0) / 12 for l in active_loans)
+    proposed_monthly_debt = loan_amount / 12
+    total_monthly_debt = existing_monthly_debt + proposed_monthly_debt
+    
+    if monthly_income > 0:
+        dti = total_monthly_debt / monthly_income
+    else:
+        dti = float('inf') if total_monthly_debt > 0 else 0
+    
+    details["current_dti"] = round(existing_monthly_debt / monthly_income, 4) if monthly_income > 0 else None
+    details["projected_dti"] = round(dti, 4) if dti != float('inf') else None
+    
+    if dti > LOAN_ELIGIBILITY_RULES["max_dti"]:
+        violations.append({
+            "rule": "max_dti",
+            "message": f"Projected DTI ({dti:.2%}) exceeds maximum allowed ({LOAN_ELIGIBILITY_RULES['max_dti']:.0%})",
+            "current_value": round(dti, 4),
+            "required_value": LOAN_ELIGIBILITY_RULES["max_dti"]
+        })
+    
+    # Rule 5: Loan Amount to Income Ratio
+    if annual_income > 0:
+        loan_to_income = loan_amount / annual_income
+        details["loan_to_income_ratio"] = round(loan_to_income, 4)
+        if loan_to_income > LOAN_ELIGIBILITY_RULES["max_loan_to_income_ratio"]:
+            violations.append({
+                "rule": "max_loan_to_income_ratio",
+                "message": f"Loan amount (${loan_amount:,.2f}) exceeds {LOAN_ELIGIBILITY_RULES['max_loan_to_income_ratio']:.0%} of annual income (${annual_income:,.2f})",
+                "current_value": round(loan_to_income, 4),
+                "required_value": LOAN_ELIGIBILITY_RULES["max_loan_to_income_ratio"]
+            })
+    else:
+        details["loan_to_income_ratio"] = None
+    
+    # Rule 6: Employment Stability Score
+    employment_score = calculate_employment_score(customer)
+    details["employment_score"] = employment_score
+    if employment_score < LOAN_ELIGIBILITY_RULES["min_employment_score"]:
+        violations.append({
+            "rule": "min_employment_score",
+            "message": f"Employment stability score ({employment_score}) is below minimum required ({LOAN_ELIGIBILITY_RULES['min_employment_score']})",
+            "current_value": employment_score,
+            "required_value": LOAN_ELIGIBILITY_RULES["min_employment_score"]
+        })
+    
+    # Rule 7: Blocked Risk Flags
+    risk_flags = customer.get("risk_flags") or []  # Handle None values
+    details["risk_flags"] = risk_flags
+    blocked_flags = [f for f in risk_flags if f in LOAN_ELIGIBILITY_RULES["blocked_risk_flags"]]
+    if blocked_flags:
+        violations.append({
+            "rule": "blocked_risk_flags",
+            "message": f"Customer has blocking risk flags: {', '.join(blocked_flags)}",
+            "current_value": blocked_flags,
+            "required_value": "No blocking flags allowed"
+        })
+    
+    return {
+        "eligible": len(violations) == 0,
+        "violations": violations,
+        "details": details,
+        "rules_checked": list(LOAN_ELIGIBILITY_RULES.keys())
+    }
 
 
 app = FastAPI(title="Teller Banking Backend")
@@ -149,7 +313,7 @@ async def get_accounts(customer_id: str):
 @app.post(
     "/loans/apply",
     response_model=Loan,
-    description="Creates a new loan request for the customer and performs a basic eligibility check using income and credit score."
+    description="Creates a new loan request for the customer. Hard eligibility rules are enforced and cannot be bypassed."
 )
 async def apply_for_loan(request: LoanRequest):
     customer = await db.customers.find_one({"customer_id": request.customer_id})
@@ -157,26 +321,55 @@ async def apply_for_loan(request: LoanRequest):
     if not customer:
         raise HTTPException(404, "Customer does not exist")
 
-    user_override = bool(getattr(request, "force_approve", False))
+    # STEP 1: Check HARD eligibility rules (cannot be overridden by teller)
+    eligibility = await check_loan_eligibility(customer, request.amount, db)
+    
+    if not eligibility["eligible"]:
+        # These rules cannot be bypassed - reject immediately
+        violation_messages = [v["message"] for v in eligibility["violations"]]
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "Loan application rejected - eligibility requirements not met",
+                "message": "This loan cannot be approved as the customer does not meet mandatory eligibility criteria. These rules cannot be overridden.",
+                "violations": eligibility["violations"],
+                "details": eligibility["details"],
+                "force_approve_allowed": False
+            }
+        )
+    
+    # STEP 2: Customer passed hard rules - now apply soft rules for approval decision
+    user_override = bool(request.force_approve) if request.force_approve else False
+    user_reject = bool(request.force_reject) if request.force_reject else False
 
-    if user_override:
-        status = "approved"
+    if user_reject:
+        # User explicitly rejected the loan
+        status = "denied"
+        approved = False
         decision_source = "user_override"
-        decision_reason = "manual approval by advisor"
+        decision_reason = "manual rejection by advisor"
+    elif user_override:
+        status = "active"
+        approved = True
+        decision_source = "user_override"
+        decision_reason = "manual approval by advisor (eligibility verified)"
     else:
-        # Very simple loan eligibility check
-        if customer["credit_score"] < 600:
-            status = "denied"
+        # Soft eligibility checks (can be overridden by teller)
+        if customer["credit_score"] < 650:
+            status = "manual_review"
+            approved = None  # Pending review
             decision_source = "system_auto"
-            decision_reason = "credit_score_below_600"
+            decision_reason = "credit_score_below_650_needs_review"
         elif request.amount > customer["annual_income"] * 0.3:
             status = "manual_review"
+            approved = None  # Pending review
             decision_source = "system_auto"
             decision_reason = "amount_exceeds_30pct_income"
         else:
-            status = "approved"
+            status = "active"
+            approved = True
             decision_source = "system_auto"
-            decision_reason = "meets_basic_criteria"
+            decision_reason = "meets_all_criteria"
 
     # Create loan record
     new_loan = {
@@ -184,10 +377,12 @@ async def apply_for_loan(request: LoanRequest):
         "customer_id": request.customer_id,
         "amount": request.amount,
         "status": status,
+        "approved": approved,
         "remaining_balance": request.amount,
         "purpose": request.purpose,
         "decision_source": decision_source,
         "decision_reason": decision_reason,
+        "eligibility_details": eligibility["details"],
     }
 
     await db.loans.insert_one(new_loan)
@@ -197,6 +392,55 @@ async def apply_for_loan(request: LoanRequest):
         del new_loan["_id"]
 
     return new_loan
+
+
+# ================
+#   LOAN ELIGIBILITY CHECK (PRE-APPLICATION)
+# ================
+@app.get(
+    "/loans/eligibility/{customer_id}",
+    description="Check if a customer is eligible for a loan of a specified amount. Returns detailed eligibility information including any rule violations. These rules cannot be bypassed."
+)
+async def check_eligibility(customer_id: str, amount: float):
+    customer = await db.customers.find_one({"customer_id": customer_id})
+    
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+    
+    eligibility = await check_loan_eligibility(customer, amount, db)
+    
+    return {
+        "customer_id": customer_id,
+        "loan_amount": amount,
+        "eligible": eligibility["eligible"],
+        "violations": eligibility["violations"],
+        "details": eligibility["details"],
+        "rules_checked": eligibility["rules_checked"],
+        "message": "Customer is eligible for this loan amount" if eligibility["eligible"] else "Customer does not meet eligibility requirements - loan cannot be approved"
+    }
+
+
+# ================
+#   GET LOAN ELIGIBILITY RULES
+# ================
+@app.get(
+    "/loans/rules",
+    description="Returns the current loan eligibility rules that are enforced by the system. These rules cannot be overridden by tellers."
+)
+async def get_loan_rules():
+    return {
+        "rules": LOAN_ELIGIBILITY_RULES,
+        "description": {
+            "min_credit_score": "Minimum credit score required to be eligible for any loan",
+            "max_active_loans": "Maximum number of active/approved loans a customer can have",
+            "max_dti": "Maximum debt-to-income ratio allowed (including the new loan)",
+            "min_annual_income": "Minimum annual income required",
+            "max_loan_to_income_ratio": "Maximum loan amount as a percentage of annual income",
+            "min_employment_score": "Minimum employment stability score required",
+            "blocked_risk_flags": "Risk flags that automatically disqualify a customer"
+        },
+        "enforcement": "These rules are enforced by the system and cannot be bypassed by teller force_approve"
+    }
 
 
 # ================
@@ -253,41 +497,6 @@ async def calculate_dti(customer_id: str):
         "risk_level": status,
         "total_loans_count": len(customer_loans),
     }
-
-
-# ================
-#   EMPLOYMENT SCORE CALCULATION
-# ================
-def calculate_employment_score(customer: dict) -> float:
-    """Calculate employment stability score based on job type and tenure.
-    
-    Args:
-        customer: Customer document with employment fields
-        
-    Returns:
-        Employment score between 0.0 and 1.0
-    """
-    emp_type = customer.get("employment_type")
-    years = customer.get("years_with_employer")
-    business_years = customer.get("business_years")
-
-    if emp_type == "permanent":
-        if years is not None and years >= 2:
-            return 1.0
-        return 0.7
-
-    if emp_type == "contract":
-        return 0.5
-
-    if emp_type in ["part_time", "part-time"]:
-        return 0.3
-
-    if emp_type == "self_employed":
-        if business_years is not None and business_years >= 3:
-            return 0.6
-        return 0.4
-
-    return 0.0
 
 
 # ================

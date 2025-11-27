@@ -32,6 +32,7 @@ class LoanRequest(BaseModel):
     amount: float
     purpose: Literal["cars", "house", "personal", "business", "other"]
     force_approve: Optional[bool] = False
+    force_reject: Optional[bool] = False
 
 
 class Loan(BaseModel):
@@ -40,6 +41,7 @@ class Loan(BaseModel):
     customer_id: str
     amount: float
     status: str
+    approved: Optional[bool] = None
     remaining_balance: float
     purpose: str
 
