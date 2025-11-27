@@ -9,6 +9,7 @@ from typing import List, Optional
 import os
 import httpx
 import smtplib
+import base64
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from twilio.rest import Client
@@ -612,7 +613,13 @@ async def get_loan_contract(loan_id: str):
     # with open(f"/tmp/{loan_id}_contract.pdf", "wb") as f:
     #     f.write(pdf_bytes)
 
-    # Return as streaming response
-    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers={
-        "Content-Disposition": f'attachment; filename="{loan_id}_contract.pdf"'
-    })
+    # Encode as base64 for MCP tool compatibility
+    import base64
+    pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+    
+    return {
+        "loan_id": loan_id,
+        "filename": f"{loan_id}_contract.pdf",
+        "pdf_base64": pdf_base64,
+        "message": "PDF contract generated successfully. Decode the base64 string to get the PDF file."
+    }

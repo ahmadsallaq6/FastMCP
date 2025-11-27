@@ -29,20 +29,24 @@ def display_tool_result(result: Any, result_str: str, container=None) -> None:
     
     # Check if result contains a PDF (base64 encoded)
     if isinstance(result, dict) and "pdf_base64" in result:
-        container.write("✅ PDF contract generated successfully!")
+        container.success("✅ PDF contract generated successfully!")
         # Show download button for the PDF
         try:
             pdf_bytes = base64.b64decode(result['pdf_base64'])
+            filename = result.get('filename', 'contract.pdf')
             container.download_button(
-                label="📄 Download Contract PDF",
+                label=f"📥 {filename}",
                 data=pdf_bytes,
-                file_name=result.get('filename', 'contract.pdf'),
+                file_name=filename,
                 mime="application/pdf",
-                use_container_width=True
+                use_container_width=True,
+                key=f"pdf_download_{result.get('loan_id', 'unknown')}"
             )
             # Show the rest of the result (without the large base64 string)
             display_result = {k: v for k, v in result.items() if k != 'pdf_base64'}
-            container.code(json.dumps(display_result, indent=2))
+            if display_result:
+                container.info("**Result Details:**")
+                container.json(display_result)
         except Exception as e:
             container.error(f"Failed to decode PDF: {str(e)}")
             container.code(result_str)
