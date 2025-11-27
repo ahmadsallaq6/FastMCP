@@ -5,6 +5,7 @@ Handles streaming responses, tool execution, and approval workflows.
 
 import streamlit as st
 import json
+import base64
 from typing import List, Dict, Any, Tuple, Optional, Union
 
 import sys
@@ -13,6 +14,44 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 from mcp_client import MCPClient, run_async
 from config import tool_requires_approval, SYSTEM_PROMPT
 from session import save_message, log_interaction
+
+
+def display_tool_result(result: Any, result_str: str, container=None) -> None:
+    """Display tool result, handling PDF downloads specially.
+    
+    Args:
+        result: The parsed result dictionary
+        result_str: The stringified result
+        container: Streamlit container to display in (defaults to st)
+    """
+    if container is None:
+        container = st
+    
+    # Check if result contains a PDF (base64 encoded)
+    if isinstance(result, dict) and "pdf_base64" in result:
+        container.success("✅ PDF contract generated successfully!")
+        # Show download button for the PDF
+        try:
+            pdf_bytes = base64.b64decode(result['pdf_base64'])
+            filename = result.get('filename', 'contract.pdf')
+            container.download_button(
+                label=f"📥 {filename}",
+                data=pdf_bytes,
+                file_name=filename,
+                mime="application/pdf",
+                use_container_width=True,
+                key=f"pdf_download_{result.get('loan_id', 'unknown')}"
+            )
+            # Show the rest of the result (without the large base64 string)
+            display_result = {k: v for k, v in result.items() if k != 'pdf_base64'}
+            if display_result:
+                container.info("**Result Details:**")
+                container.json(display_result)
+        except Exception as e:
+            container.error(f"Failed to decode PDF: {str(e)}")
+            container.code(result_str)
+    else:
+        container.code(result_str)
 
 
 @st.cache_data(ttl=300, show_spinner=False)  # Cache for 5 minutes
@@ -143,7 +182,7 @@ def handle_stream_with_local_tools(
                         st.write("Input:")
                         st.code(item_args)
                         st.write("Output:")
-                        st.code(result_str)
+                        display_tool_result(result, result_str)
                 
                 pending_tool_calls.append({
                     "call_id": call_id,
@@ -372,7 +411,7 @@ def process_pending_approval(server_url: str, model: str):
                     st.write("Input:")
                     st.code(json.dumps(exec_arguments, indent=2))
                     st.write("Output:")
-                    st.code(result_str)
+                    display_tool_result(result, result_str)
                 
                 base_tools.append({
                     "name": tool_name,
