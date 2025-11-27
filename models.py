@@ -30,15 +30,16 @@ class Loan(BaseModel):
     purpose: str
 
 
-class GenericEmailRequest(BaseModel):
+class LoanEmailRequest(BaseModel):
     customer_id: str
-    subject: str
-    body: str
-    loan_id: Optional[str] = None
-
+    loan_id: str
 
 class LoanSMSRequest(BaseModel):
     customer_id: str
     loan_id: str
 
-
+class GenericEmailRequest(BaseModel):
+    customer_id: str
+    subject: str
+    body: str
+    loan_id: Optional[str] = None
