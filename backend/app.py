@@ -17,9 +17,10 @@ from dotenv import load_dotenv
 from models import Customer, Account, LoanRequest, Loan, GenericEmailRequest, LoanSMSRequest, LoanEmailRequest
 from database import get_db
 
-
-
-
+# Load environment variables from the project root .env file
+# This must be done early, before any functions try to read env vars
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_project_root, ".env"))
 
 
 def send_email(to_email: str, subject: str, body: str):
@@ -46,8 +47,6 @@ def send_email(to_email: str, subject: str, body: str):
             server.sendmail(sender_email, to_email, msg.as_string())
     except Exception as exc:  # pragma: no cover - smtp failure
         raise HTTPException(500, f"Email send failed: {str(exc)}") from exc
-
-load_dotenv()
 
 
 # ============================
