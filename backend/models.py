@@ -54,3 +54,8 @@ class GenericEmailRequest(BaseModel):
 class LoanSMSRequest(BaseModel):
     customer_id: str
     loan_id: str
+
+
+class LoanEmailRequest(BaseModel):
+    customer_id: str
+    loan_id: str

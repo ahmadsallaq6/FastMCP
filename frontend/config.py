@@ -11,7 +11,7 @@ load_dotenv()
 # Server Configuration
 # ======================
 
-DEFAULT_SERVER_URL = "http://localhost:8001"
+DEFAULT_SERVER_URL = "http://localhost:8000"
 
 # ======================
 # Azure OpenAI Configuration

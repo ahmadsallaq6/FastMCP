@@ -14,24 +14,12 @@ from email.mime.multipart import MIMEMultipart
 from twilio.rest import Client
 from dotenv import load_dotenv
 
-from models import Customer, Account, LoanRequest, Loan, GenericEmailRequest, LoanSMSRequest
+from models import Customer, Account, LoanRequest, Loan, GenericEmailRequest, LoanSMSRequest, LoanEmailRequest
 from database import get_db
 
 
-def send_sms(to_number: str, message: str):
-    """Send an SMS using Twilio credentials from the environment."""
-    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    from_number = os.getenv("TWILIO_PHONE_NUMBER")
 
-    if not account_sid or not auth_token or not from_number:
-        raise HTTPException(500, "Twilio configuration missing in environment variables.")
 
-    try:
-        client = Client(account_sid, auth_token)
-        client.messages.create(body=message, from_=from_number, to=to_number)
-    except Exception as exc:  # pragma: no cover - third party failure
-        raise HTTPException(500, f"SMS send failed: {str(exc)}") from exc
 
 
 def send_email(to_email: str, subject: str, body: str):
@@ -60,6 +48,48 @@ def send_email(to_email: str, subject: str, body: str):
         raise HTTPException(500, f"Email send failed: {str(exc)}") from exc
 
 load_dotenv()
+
+
+# ============================
+# INFOBIP SMS HELPER
+# ============================
+async def send_sms_infobip(to_number: str, message: str):
+    base_url = os.getenv("INFOBIP_BASE_URL")
+    api_key = os.getenv("INFOBIP_API_KEY")
+    sender = os.getenv("INFOBIP_SENDER")
+
+    if not base_url or not api_key or not sender:
+        raise HTTPException(500, "Infobip configuration missing")
+
+    url = f"https://{base_url}/sms/2/text/advanced"
+
+    payload = {
+        "messages": [
+            {
+                "from": sender,
+                "destinations": [{"to": to_number}],
+                "text": message
+            }
+        ]
+    }
+
+    headers = {
+        "Authorization": f"App {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload, headers=headers)
+
+    if response.status_code >= 400:
+        # return info for logging/inspection
+        return {"status": "failed", "http_status": response.status_code, "error": response.text}
+
+    return {"status": "sent", "http_status": response.status_code, "response": response.json()}
+
+
+
+
 
 app = FastAPI(title="Teller Banking Backend")
 
@@ -394,3 +424,42 @@ async def analytics_loan_summary():
         "average_loan_amount": avg_amount,
     }
 
+@app.post("/loans/send-approval-sms", description="Sends a loan approval SMS to the customer using Infobip.")
+async def send_loan_approval_sms(request: LoanEmailRequest):
+    # Fetch customer
+    customer = await db.customers.find_one({"customer_id": request.customer_id})
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    # Fetch loan
+    loan = await db.loans.find_one({"loan_id": request.loan_id})
+    if not loan:
+        raise HTTPException(404, "Loan not found")
+
+    if loan["status"] != "approved":
+        raise HTTPException(400, "Loan is not approved. Cannot send approval SMS.")
+
+    # Build short SMS (same intent as email, compact)
+    sms_text = (
+        f"Hi {customer['name']}, your loan {loan['loan_id']} "
+        f"for {loan['amount']} JOD is APPROVED. Thank you - Teller Bank."
+    )
+
+    # Ensure customer has phone number
+    phone = customer.get("phone") or customer.get("mobile") or customer.get("phone_number")
+    if not phone:
+        raise HTTPException(400, "Customer phone number is not available")
+
+    # Send SMS via Infobip
+    sms_result = await send_sms_infobip(phone, sms_text)
+
+    if sms_result.get("status") == "failed":
+        # You can choose to log this or fallback to email. For now return failure info.
+        raise HTTPException(500, f"Failed to send SMS: {sms_result.get('error')}")
+
+    return {
+        "success": True,
+        "sms_sent_to": phone,
+        "loan_id": loan["loan_id"],
+        "sms_result": sms_result
+    }
